@@ -5,7 +5,10 @@ dotnet publish -c Release --self-contained -r linux-arm
 Params
 -port [ComPort]
 -debug              enables debug output
--ntrips [passwd@]addr[:port][/mntpnt[:str]]      //NTRIP Server
+-ntrip-server
+-ntrip-port
+-ntrip-mountpoint
+-ntrip-password
  */
 
 using System;
@@ -14,6 +17,7 @@ using System.IO.Ports;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UBLOX;
@@ -24,18 +28,28 @@ namespace Zedf9p
     {
         const float MIN_ACCURACY_REQUIRED = 20.000F;
         const int MIN_SYRVEY_TIME_REQUIRED_SEC = 20;
+        const int RTCM_BUFFER_SIZE = 500; //The size of the RTCM correction data varies but in general it is approximately 2000 bytes every second (~2500 bytes every 10th second when 1230 is transmitted).
+        const int NTRIP_INCOMING_BUFFER_SIZE = 1000; //Size of incoming buffer for the connection with NTRIP Caster
 
         //parameters
         static string _port = "";
         static bool _debug = false;
+
+        //ntrip socket
+        static Socket socket;
+        static byte[] ntripOutgoingBuffer = new byte[RTCM_BUFFER_SIZE];
+        static int rtcmFrame = 0;
+        static byte[] ntripIncomingBuffer = new byte[NTRIP_INCOMING_BUFFER_SIZE];
+        static string _ntripServer;
+        static int _ntripPort;
+        static string _ntripMountpoint;
+        static string _ntripPassword;
 
 
         async static Task Main(string[] args)
         {
             try
             {
-                await StartNTRIP();
-
                 parseParams(args);
 
                 Console.WriteLine("Hello F9p!");
@@ -90,7 +104,7 @@ namespace Zedf9p
                 myGPS.attachNMEAHandler(processNMEA);
                 myGPS.attachRTCMHandler(processRTCM);
 
-                StartNTRIP();
+                await StartNTRIP();
 
                 while (true)
                 {
@@ -125,65 +139,82 @@ namespace Zedf9p
             {
                 switch (args[i].ToLower())
                 {
-                    case "-port": _port = args[++i]; break;
+                    case "-com-port": _port = args[++i]; break;
                     case "-debug": _debug = true; break;
+                    case "-ntrip-server": _ntripServer = args[++i]; break;
+                    case "-ntrip-port": _ntripPort = int.Parse(args[++i]); break;
+                    case "-ntrip-mountpoint": _ntripMountpoint = args[++i]; break;
+                    case "-ntrip-password": _ntripPassword = args[++i]; break;
                     default: throw new ArgumentException("Argument not identified: " + args[i]);
                 }
             }
         }
 
-        static byte processNMEA(byte incoming)
+        static async Task processNMEA(byte incoming)
         {
             Console.Write((char)incoming);
-
-            return 0;
         }
 
-        static byte processRTCM(byte incoming)
+        static async Task processRTCM(byte incoming)
         {
-            Console.Write((char)incoming);
+            if (socket != null && socket.Connected)
+            {
 
-            return 0;
+                ntripOutgoingBuffer[rtcmFrame++] = incoming;
+
+                if (rtcmFrame == RTCM_BUFFER_SIZE)
+                {
+                    rtcmFrame = 0;
+
+                    Console.WriteLine("Sending RTCM");
+
+                    socket.Send(ntripOutgoingBuffer);
+                }
+            }
         }
 
         /// <summary>
-        /// Opens the connection to the NTRIP server and starts receiving
+        /// Opens the connection to the NTRIP server and starts sending
         /// </summary>
         private static async Task StartNTRIP()
         {
-            var he = await Dns.GetHostEntryAsync("rtk2go.com");
+            if (_ntripServer != null && _ntripMountpoint != null && _ntripPassword != null && _ntripPort != 0)
+            {
 
+                var hostEntry = await Dns.GetHostEntryAsync(_ntripServer);
+                var BroadCasterIP = hostEntry.AddressList[0]; //Select correct Address
+                var BroadCasterPort = _ntripPort; //Select correct port 
 
+                //Connect to server
+                socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                //sckt.Blocking = true;
+                socket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
 
-            var BroadCasterIP = IPAddress.Parse("129.217.182.51"); //Select correct Address
-            var BroadCasterPort = 80; //Select correct port (usually 80)
-            var stream = "FLEN0"; //Insert the correct stream
-            var username = "USERNAME"; //Insert your username!
-            var password = "PASSWORD"; //Insert your password!
+                //send credentials to ntrip caster
+                string tosend = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
+                tosend += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
 
-            //Connect to server
-            var sckt = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            sckt.Blocking = true;
-            sckt.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
+                //Send auth request
+                socket.Send(Encoding.ASCII.GetBytes(tosend));
 
-            //Build request message
-            //string auth = ToBase64(username + ":" + password);
-            //string msg = "GET /" + stream + " HTTP/1.1\r\n";
-            //msg += "User-Agent: NTRIP iter.dk\r\n";
-            //msg += "Authorization: Basic " + auth + "\r\n"; //This line can be removed if no authorization is needed
-            //msg += "Accept: */*\r\nConnection: close\r\n";
-            //msg += "\r\n";
+                //Receive respone with ICY 200 OK or ERROR - Bad Password
+                var rcvLen = socket.Receive(ntripIncomingBuffer);
+                var response = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
 
-            ////Send request
-            //byte[] data = System.Text.Encoding.ASCII.GetBytes(msg);
-            //sckt.Send(data);
-
-            //byte[] returndata = new byte[256];
-
-            //Thread.Sleep(100); //Wait for response
-            //sckt.Receive(returndata); //Get response
-            //string responseData = System.Text.Encoding.ASCII.GetString(returndata, 0, returndata.Length);
-            //ShowResponse(responseData);
+                if (response.Trim().Equals("ICY 200 OK"))
+                {
+                    Console.WriteLine("Authentication passed!");
+                }
+                else
+                {
+                    Console.WriteLine("Authentiction error: " + response);
+                    throw new Exception("NTRIP AUthentication error");
+                }
+            }
+            else
+            {
+                throw new Exception("NTRIP Credentials not provided");
+            }
         }
     }
 }

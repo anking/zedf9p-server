@@ -10,6 +10,7 @@ using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace UBLOX
 {
@@ -22,8 +23,8 @@ namespace UBLOX
         Stream _nmeaOutputPort = null; //The user can assign an output port to print NMEA sentences if they wish
         public bool _debug { get; set; } = false;			//The stream to send debug messages to if enabled
         public Svin svin { get; }
-        Func<byte, byte> _nmeaHandler = null;
-        Func<byte, byte> _rtcmHandler = null;
+        Func<byte, Task> _nmeaHandler = null;
+        Func<byte, Task> _rtcmHandler = null;
 
         const int MAX_PAYLOAD_SIZE = 256; //We need ~220 bytes for getProtocolVersion on most ublox modules
 
@@ -1549,7 +1550,7 @@ namespace UBLOX
             return ((byte)payloadCfg[spotToStart]);
         }
 
-        public void attachNMEAHandler(Func<byte, byte> handler) => _nmeaHandler = handler;
-        public void attachRTCMHandler(Func<byte, byte> handler) => _rtcmHandler = handler;
+        public void attachNMEAHandler(Func<byte, Task> handler) => _nmeaHandler = handler;
+        public void attachRTCMHandler(Func<byte, Task> handler) => _rtcmHandler = handler;
     }
 }
