@@ -1,5 +1,6 @@
 ﻿/*
- to publish application for linux/raspberry PI environment:
+
+to publish application for linux/raspberry PI environment:
 dotnet publish -c Release --self-contained -r linux-arm
 
 Params
@@ -9,9 +10,11 @@ Params
 -ntrip-port
 -ntrip-mountpoint
 -ntrip-password
+-rtcm-accuracy-req          minimum accuracy to complete survey (float) in meters default 3.000F
+-rtcm-survey-time           minimum time require to complete survey
 
 To launch this on pi run the following
-/home/pi/f9p/Zedf9p -com-port /dev/ttyACM0 -ntrip-server rtk2go.com -ntrip-password 6n9c2TxqKwuc -ntrip-port 2101 -ntrip-mountpoint Wexford
+/home/pi/f9p/Zedf9p -com-port /dev/ttyACM0 -ntrip-server rtk2go.com -ntrip-password 6n9c2TxqKwuc -ntrip-port 2101 -ntrip-mountpoint Wexford -rtcm-accuracy-req 3.000 -rtcm-survey-time 60
 
 socket implementation description used for local sockets can be found here:
 https://medium.com/@goelhardik/http-connection-to-unix-socket-from-dotnet-core-in-c-21d19ef08f8a
@@ -34,8 +37,8 @@ namespace Zedf9p
 {
     class Program
     {
-        const float MIN_ACCURACY_REQUIRED = 20.000F;
-        const int MIN_SYRVEY_TIME_REQUIRED_SEC = 20;
+        //const float MIN_ACCURACY_REQUIRED = 3.000F;
+        //const int MIN_SYRVEY_TIME_REQUIRED_SEC = 60; //minimum time required for the survey to complete
         const int RTCM_BUFFER_SIZE = 500; //The size of the RTCM correction data varies but in general it is approximately 2000 bytes every second (~2500 bytes every 10th second when 1230 is transmitted).
         const int NTRIP_INCOMING_BUFFER_SIZE = 1000; //Size of incoming buffer for the connection with NTRIP Caster
 
@@ -44,7 +47,7 @@ namespace Zedf9p
         static bool _debug = false;
 
         //ntrip socket
-        static Socket _ntripSocket;
+        static Socket _ntripCasterSocket;
         static byte[] ntripOutgoingBuffer = new byte[RTCM_BUFFER_SIZE];
         static int rtcmFrame = 0;
         static byte[] ntripIncomingBuffer = new byte[NTRIP_INCOMING_BUFFER_SIZE];
@@ -52,12 +55,14 @@ namespace Zedf9p
         static int _ntripPort;
         static string _ntripMountpoint;
         static string _ntripPassword;
+        static float _rtcmAccuracy;
+        static int _rtcmSurveyTime;
 
         //Pipes for interapplication communication
         static NamedPipeClientStream clientPipeToNode;
 
         // f9p socket - local socket to communicate with node express server
-        static Socket _f9pSocket;
+        static Socket _serverAppSocket;
 
 
         async static Task Main(string[] args)
@@ -66,14 +71,16 @@ namespace Zedf9p
             {
                 parseParams(args);
 
-                Console.WriteLine("Hello F9p!");
-                Console.WriteLine("Create serial port");
+                Console.WriteLine("Hello F9p!");                
 
+                if (_rtcmAccuracy == 0 || _rtcmSurveyTime == 0) throw new InvalidDataException("Survey accuracy or minimum time not provided, cannot continue...");
+
+                Console.WriteLine("Create serial port connection for f9p module...");
                 SFE_UBLOX_GPS myGPS = new SFE_UBLOX_GPS(_port, _debug);
 
-                Console.WriteLine("Enable Survey Mode, minimum " + MIN_SYRVEY_TIME_REQUIRED_SEC + "sec and minimum accuracy " + MIN_ACCURACY_REQUIRED + " meters");
+                Console.WriteLine("Enable Survey Mode, minimum " + _rtcmSurveyTime + "sec and minimum accuracy " + _rtcmAccuracy + " meters");
 
-                var response = myGPS.enableSurveyMode(MIN_SYRVEY_TIME_REQUIRED_SEC, MIN_ACCURACY_REQUIRED); //Enable Survey in, 60 seconds, 5.0m
+                var response = myGPS.enableSurveyMode((ushort)_rtcmSurveyTime, _rtcmAccuracy); //Enable Survey in, 60 seconds, 5.0m
 
                 Console.WriteLine("Enable RTCM Messaging on USB");
 
@@ -120,7 +127,7 @@ namespace Zedf9p
 
                 await StartNTRIP();
 
-                startPipes();
+                startF9pSocket();
 
                 while (true)
                 {
@@ -143,47 +150,43 @@ namespace Zedf9p
             {
                 Console.WriteLine(ea.Message);
             }
+            catch (Exception e)
+            {
+                Console.WriteLine("Error: "+e.Message);
+            }
             finally
             {
                 // in the end, disconnect and close the socket to cleanup
-                _f9pSocket.Disconnect(false);
-                _f9pSocket.Close();
+                if (_serverAppSocket != null)
+                {
+                    _serverAppSocket.Disconnect(false);
+                    _serverAppSocket.Close();
+                }
+
+                if (_ntripCasterSocket != null)
+                {
+                    _ntripCasterSocket.Disconnect(false);
+                    _ntripCasterSocket.Close();
+                }
 
                 Environment.Exit(0);
             }
         }
 
-        static void startPipes()
+        static void startF9pSocket()
         {
             try
             {
-                //Client Pipe for HTTP server running on Node
-                //clientPipeToNode = new Socket(AddressFamily.InterNetwork, ProtocolType.Tcp, ProtocolType.);
-                //clientPipeToNode.Connect();
-                //StreamReader reader = new StreamReader(clientPipeToNode);
-                //StreamWriter writer = new StreamWriter(clientPipeToNode);
 
-                _f9pSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                //Client socket for HTTP server running on Node
+                _serverAppSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+
                 var unixEndpoint = new UnixEndPoint("/tmp/Zedf9p.sock"); // this address is where the socket exists
-                _f9pSocket.Connect(unixEndpoint); // connect to the socket
 
-                //socket.Send(new byte[4] { 0, 1, 2, 3 });
-
-                // assuming we want the server to answer to the /getMyData route with a query parameter; create a request like this in HTTP spec format
-                //var request = $"GET /getMyData?id=testIdValue "
-                //  + "HTTP/1.1\r\n"
-                //  + "Host: localhost\r\n"
-                //  + "Content-Length: 0\r\n"
-                //  + "\r\n";
-                //// convert the request into byte data
-                //byte[] requestBytes = Encoding.ASCII.GetBytes(request);
-                //_f9pSocket.Send(requestBytes);
-                //// receive the response; assuming it's less than 1024 bytes. If it can be more, keep receiving data and keep appending it to a final response array
-                //byte[] bytesReceived = new byte[1024];
-                //int numBytes = _f9pSocket.Receive(bytesReceived);
-                
+                _serverAppSocket.Connect(unixEndpoint); // connect to the socket                 
             }
             catch (SocketException ese) {
+                //unable to connect to the socket, spit out error in a console
                 Console.WriteLine(ese.Message);
             }
         }
@@ -200,44 +203,45 @@ namespace Zedf9p
                     case "-ntrip-port": _ntripPort = int.Parse(args[++i]); break;
                     case "-ntrip-mountpoint": _ntripMountpoint = args[++i]; break;
                     case "-ntrip-password": _ntripPassword = args[++i]; break;
+                    case "-rtcm-accuracy-req": _rtcmAccuracy = float.Parse(args[++i]); break;
+                    case "-rtcm-survey-time": _rtcmSurveyTime = int.Parse(args[++i]); break;
                     default: throw new ArgumentException("Argument not identified: " + args[i]);
                 }
             }
         }
 
+        //handler for NMEA data coming from the module
         static async Task processNMEA(byte incoming)
         {
-            //Console.Write((char)incoming);
-
-            //if (clientPipeToNode.IsConnected && clientPipeToNode.CanWrite)
-            //{
-            //    //var data = new byte[4] { 0, 1, 2, 3 };
-            //    clientPipeToNode.WriteByte(incoming);//WriteAsync(data, 0, data.Length);
-            //}
-
-            if (_f9pSocket != null && _f9pSocket.Connected) {
-                //byte[] requestBytes = Encoding.ASCII.GetBytes(request);
-                //byte[] requestBytes = Encoding.ASCII.GetBytes();
-
-                _f9pSocket.Send(new byte[1] { incoming });
+            //send nmea info thru the f9p socket to the http server app
+            if (_serverAppSocket != null && _serverAppSocket.Connected) {
+                _serverAppSocket.Send(new byte[1] { incoming });
             }
         }
 
+        //handler for RTCM data coming from the module
         static async Task processRTCM(byte incoming)
         {
-            if (_ntripSocket != null && _ntripSocket.Connected)
+            //check if ntrip socket is defined and connected
+            if (_ntripCasterSocket != null && _ntripCasterSocket.Connected)
             {
-
+                //push RTCM bute into the receive buffer until it reaches maximum defined size
                 ntripOutgoingBuffer[rtcmFrame++] = incoming;
 
+                //once max buffer size is reached send rtcm data to the RTCM caster thru the socket via NTRIP protocol
                 if (rtcmFrame == RTCM_BUFFER_SIZE)
                 {
                     rtcmFrame = 0;
 
                     Console.WriteLine("Sending RTCM");
 
-                    _ntripSocket.Send(ntripOutgoingBuffer);
+                    _ntripCasterSocket.Send(ntripOutgoingBuffer);
                 }
+            } 
+            else
+            {
+                //check if socket was closed
+                Console.WriteLine("Socket disconnected?");
             }
         }
 
@@ -254,19 +258,19 @@ namespace Zedf9p
                 var BroadCasterPort = _ntripPort; //Select correct port 
 
                 //Connect to server
-                _ntripSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                _ntripCasterSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 //sckt.Blocking = true;
-                _ntripSocket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
+                _ntripCasterSocket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
 
                 //send credentials to ntrip caster
                 string tosend = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
                 tosend += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
 
                 //Send auth request
-                _ntripSocket.Send(Encoding.ASCII.GetBytes(tosend));
+                _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(tosend));
 
                 //Receive respone with ICY 200 OK or ERROR - Bad Password
-                var rcvLen = _ntripSocket.Receive(ntripIncomingBuffer);
+                var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
                 var response = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
 
                 if (response.Trim().Equals("ICY 200 OK"))
