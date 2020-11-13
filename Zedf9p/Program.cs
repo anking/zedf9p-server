@@ -9,10 +9,18 @@ Params
 -ntrip-port
 -ntrip-mountpoint
 -ntrip-password
+
+To launch this on pi run the following
+/home/pi/f9p/Zedf9p -com-port /dev/ttyACM0 -ntrip-server rtk2go.com -ntrip-password 6n9c2TxqKwuc -ntrip-port 2101 -ntrip-mountpoint Wexford
+
+socket implementation description used for local sockets can be found here:
+https://medium.com/@goelhardik/http-connection-to-unix-socket-from-dotnet-core-in-c-21d19ef08f8a
+
  */
 
 using System;
 using System.IO;
+using System.IO.Pipes;
 using System.IO.Ports;
 using System.Linq;
 using System.Net;
@@ -36,7 +44,7 @@ namespace Zedf9p
         static bool _debug = false;
 
         //ntrip socket
-        static Socket socket;
+        static Socket _ntripSocket;
         static byte[] ntripOutgoingBuffer = new byte[RTCM_BUFFER_SIZE];
         static int rtcmFrame = 0;
         static byte[] ntripIncomingBuffer = new byte[NTRIP_INCOMING_BUFFER_SIZE];
@@ -44,6 +52,12 @@ namespace Zedf9p
         static int _ntripPort;
         static string _ntripMountpoint;
         static string _ntripPassword;
+
+        //Pipes for interapplication communication
+        static NamedPipeClientStream clientPipeToNode;
+
+        // f9p socket - local socket to communicate with node express server
+        static Socket _f9pSocket;
 
 
         async static Task Main(string[] args)
@@ -106,11 +120,13 @@ namespace Zedf9p
 
                 await StartNTRIP();
 
+                startPipes();
+
                 while (true)
                 {
                     myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
 
-                    Thread.Sleep(10); //delay(250); //Don't pound too hard on the I2C bus
+                    Thread.Sleep(10);
                 }
 
                 Environment.Exit(0);
@@ -129,7 +145,46 @@ namespace Zedf9p
             }
             finally
             {
+                // in the end, disconnect and close the socket to cleanup
+                _f9pSocket.Disconnect(false);
+                _f9pSocket.Close();
+
                 Environment.Exit(0);
+            }
+        }
+
+        static void startPipes()
+        {
+            try
+            {
+                //Client Pipe for HTTP server running on Node
+                //clientPipeToNode = new Socket(AddressFamily.InterNetwork, ProtocolType.Tcp, ProtocolType.);
+                //clientPipeToNode.Connect();
+                //StreamReader reader = new StreamReader(clientPipeToNode);
+                //StreamWriter writer = new StreamWriter(clientPipeToNode);
+
+                _f9pSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                var unixEndpoint = new UnixEndPoint("/tmp/Zedf9p.sock"); // this address is where the socket exists
+                _f9pSocket.Connect(unixEndpoint); // connect to the socket
+
+                //socket.Send(new byte[4] { 0, 1, 2, 3 });
+
+                // assuming we want the server to answer to the /getMyData route with a query parameter; create a request like this in HTTP spec format
+                //var request = $"GET /getMyData?id=testIdValue "
+                //  + "HTTP/1.1\r\n"
+                //  + "Host: localhost\r\n"
+                //  + "Content-Length: 0\r\n"
+                //  + "\r\n";
+                //// convert the request into byte data
+                //byte[] requestBytes = Encoding.ASCII.GetBytes(request);
+                //_f9pSocket.Send(requestBytes);
+                //// receive the response; assuming it's less than 1024 bytes. If it can be more, keep receiving data and keep appending it to a final response array
+                //byte[] bytesReceived = new byte[1024];
+                //int numBytes = _f9pSocket.Receive(bytesReceived);
+                
+            }
+            catch (SocketException ese) {
+                Console.WriteLine(ese.Message);
             }
         }
 
@@ -152,12 +207,25 @@ namespace Zedf9p
 
         static async Task processNMEA(byte incoming)
         {
-            Console.Write((char)incoming);
+            //Console.Write((char)incoming);
+
+            //if (clientPipeToNode.IsConnected && clientPipeToNode.CanWrite)
+            //{
+            //    //var data = new byte[4] { 0, 1, 2, 3 };
+            //    clientPipeToNode.WriteByte(incoming);//WriteAsync(data, 0, data.Length);
+            //}
+
+            if (_f9pSocket != null && _f9pSocket.Connected) {
+                //byte[] requestBytes = Encoding.ASCII.GetBytes(request);
+                //byte[] requestBytes = Encoding.ASCII.GetBytes();
+
+                _f9pSocket.Send(new byte[1] { incoming });
+            }
         }
 
         static async Task processRTCM(byte incoming)
         {
-            if (socket != null && socket.Connected)
+            if (_ntripSocket != null && _ntripSocket.Connected)
             {
 
                 ntripOutgoingBuffer[rtcmFrame++] = incoming;
@@ -168,7 +236,7 @@ namespace Zedf9p
 
                     Console.WriteLine("Sending RTCM");
 
-                    socket.Send(ntripOutgoingBuffer);
+                    _ntripSocket.Send(ntripOutgoingBuffer);
                 }
             }
         }
@@ -186,19 +254,19 @@ namespace Zedf9p
                 var BroadCasterPort = _ntripPort; //Select correct port 
 
                 //Connect to server
-                socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                _ntripSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 //sckt.Blocking = true;
-                socket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
+                _ntripSocket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
 
                 //send credentials to ntrip caster
                 string tosend = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
                 tosend += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
 
                 //Send auth request
-                socket.Send(Encoding.ASCII.GetBytes(tosend));
+                _ntripSocket.Send(Encoding.ASCII.GetBytes(tosend));
 
                 //Receive respone with ICY 200 OK or ERROR - Bad Password
-                var rcvLen = socket.Receive(ntripIncomingBuffer);
+                var rcvLen = _ntripSocket.Receive(ntripIncomingBuffer);
                 var response = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
 
                 if (response.Trim().Equals("ICY 200 OK"))
