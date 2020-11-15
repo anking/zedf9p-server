@@ -553,7 +553,7 @@ namespace UBLOX
             _serialPort.ReadTimeout = 500;
             _serialPort.WriteTimeout = 500;
 
-            Console.WriteLine("Trying to open port "+portName);
+            Console.WriteLine("Trying to open port "+portName);            
 
             _serialPort.Open();
         }
@@ -1027,6 +1027,12 @@ namespace UBLOX
         public bool checkUblox(byte requestedClass = 0, byte requestedID = 0)
         {
             return checkUbloxSerial(packetCfg, requestedClass, requestedID);
+        }
+
+        //Write data into GPS device
+        public void send(byte[] data, int len)
+        {
+            _serialPort.Write(data, 0, len);
         }
 
         //Processes NMEA and UBX binary sentences one byte at a time

@@ -99,12 +99,19 @@ namespace Zedf9p
                 else if (_client)
                 {
                     //start NTRIP client (rover)
-                    await configureGpsAsNtripClient(_rtcmAccuracy, _rtcmSurveyTime);
+                    await configureGpsAsNtripClient();
 
                     while (_ntripCasterSocket != null && _ntripCasterSocket.Connected)
                     {
                         var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
                         //var ntripResponseMessage = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
+
+                        Console.WriteLine("Sending RTCM info to module");
+
+                        _myGPS.send(ntripIncomingBuffer, rcvLen);
+
+                        //if base station configures successfully start pulling data from it
+                        _myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
 
                         Thread.Sleep(10);
                     }
@@ -122,7 +129,7 @@ namespace Zedf9p
             }
             catch (TimeoutException te)
             {
-                Console.WriteLine("Timeout exception happened");
+                Console.WriteLine("Timeout exception happened: " + te.Message);
             }
             catch (ArgumentException ea)
             {
@@ -130,7 +137,7 @@ namespace Zedf9p
             }
             catch (Exception e)
             {
-                Console.WriteLine("Error: "+e.Message);
+                Console.WriteLine("Error: "+e.Source+" - "+e.Message+" - "+e.StackTrace);
             }
             finally
             {
@@ -190,17 +197,17 @@ namespace Zedf9p
         {
             try
             {
-                Console.WriteLine("trying to connect to interpsrocess socket "+_rtcmDataSocketLocation+"...");
+                Console.WriteLine("trying to connect to interpsrocess sockets");
 
                 //Client socket for HTTP server running on Node
-                _rtcmDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
-                _syncDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
-                _nmeaDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                if (File.Exists(_rtcmDataSocketLocation)) _rtcmDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                if (File.Exists(_syncDataSocketLocation)) _syncDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                if (File.Exists(_nmeaDataSocketLocation)) _nmeaDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
 
                 //Unix endpoint creates the address where the socket exists
-                _rtcmDataSocket.Connect(new UnixEndPoint(_rtcmDataSocketLocation)); // connect to the RTCM socket
-                _syncDataSocket.Connect(new UnixEndPoint(_syncDataSocketLocation)); // connect to the SYNC socket                 
-                _nmeaDataSocket.Connect(new UnixEndPoint(_nmeaDataSocketLocation)); // connect to the SYNC socket                 
+                _rtcmDataSocket?.Connect(new UnixEndPoint(_rtcmDataSocketLocation)); // connect to the RTCM socket
+                _syncDataSocket?.Connect(new UnixEndPoint(_syncDataSocketLocation)); // connect to the SYNC socket                 
+                _nmeaDataSocket?.Connect(new UnixEndPoint(_nmeaDataSocketLocation)); // connect to the NMEA socket                 
             }
             catch (SocketException ese)
             {
@@ -210,19 +217,16 @@ namespace Zedf9p
         }
 
         //Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
-        static async Task configureGpsAsNtripClient(float rtcmAccuracy, int rtcmSurveyTime)
+        static async Task configureGpsAsNtripClient()
         {
-            
-            //ATTACH RTCM AND NMEA HANDLERS
-            //myGPS.attachNMEAHandler(processNMEA);
-            //myGPS.attachRTCMHandler(processRTCM);
+            //Console.WriteLine("Create serial port connection for f9p module...");
+            _myGPS = new SFE_UBLOX_GPS(_port, _debug);            
 
             //start sending data to ntrip caster
             await ConnectNtripCaster();
 
             //send credentials to ntrip caster
             string ntripWelcomeMessage = "GET /" + _ntripMountpoint + " /HTTP/1.0\r\n";
-            //string ntripWelcomeMessage = "GET /ACASU /HTTP/1.0\r\n";
             ntripWelcomeMessage += "User-Agent: NTRIP SOLVIT/1.0.1\r\n";
             //ntripWelcomeMessage += "Accept: */\r\n*";
             //ntripWelcomeMessage += "Connection: close \r\n";
@@ -244,8 +248,11 @@ namespace Zedf9p
             else
             {
                 Console.WriteLine("Authentiction error: " + ntripResponseMessage);
-                throw new Exception("NTRIP Authentication error");
+                throw new Exception("NTRIP Authentication error or station down");
             }
+
+            //ATTACH NMEA HANDLER
+            _myGPS.attachNMEAHandler(processNmeaClient);
         }
 
         //Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
@@ -361,6 +368,20 @@ namespace Zedf9p
                 throw new Exception("NTRIP configuration or credentials not provided");
             }
         }     
+
+        //handler for NMEA data coming from the module when creating client (-client)
+        static async Task processNmeaClient(byte incoming)
+        {
+            //send nmea info thru socket to the http server app
+            if (_nmeaDataSocket != null && _nmeaDataSocket.Connected)
+            {
+                _nmeaDataSocket.Send(new byte[1] { incoming });
+            }
+            else 
+            {
+                Console.WriteLine("error: Nmea Socket not open...");
+            }
+        }
 
         //handler for NMEA data coming from the module when creating server (-server)
         static async Task processNmeaServer(byte incoming)
