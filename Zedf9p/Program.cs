@@ -15,6 +15,7 @@ Params
 
 To launch this on pi run the following
 /home/pi/f9p/Zedf9p -server -com-port /dev/ttyACM0 -ntrip-server rtk2go.com -ntrip-password 6n9c2TxqKwuc -ntrip-port 2101 -ntrip-mountpoint Wexford -rtcm-accuracy-req 3.000 -rtcm-survey-time 60
+/home/pi/f9p/Zedf9p -client -com-port /dev/ttyACM0 -ntrip-server rtk2go.com -ntrip-password 6n9c2TxqKwuc -ntrip-port 2101 -ntrip-mountpoint Wexford
 
 socket implementation description used for local sockets can be found here:
 https://medium.com/@goelhardik/http-connection-to-unix-socket-from-dotnet-core-in-c-21d19ef08f8a
@@ -38,15 +39,18 @@ namespace Zedf9p
     class Program
     {
         const int RTCM_BUFFER_SIZE = 500; //The size of the RTCM correction data varies but in general it is approximately 2000 bytes every second (~2500 bytes every 10th second when 1230 is transmitted).
-        const int NTRIP_INCOMING_BUFFER_SIZE = 1000; //Size of incoming buffer for the connection with NTRIP Caster
+        const int NTRIP_INCOMING_BUFFER_SIZE = 10000; //Size of incoming buffer for the connection with NTRIP Caster
 
         //parameters        
         static bool _debug = false;     //debug flag
         static bool _server = false;    //if set to true program will configure gps as NTRIP server
         static bool _client = false;    //if set to true program will configure gps as NTRIP client
+        static string _nmeaDataSocketLocation = "/tmp/zed-f9p-nmea-data.sock"; //location of the interprocess socket(used to communicate with nodejs server)
+        static string _rtcmDataSocketLocation = "/tmp/zed-f9p-rtcm-data.sock"; //location of the interprocess socket(used to communicate with nodejs server)
+        static string _syncDataSocketLocation = "/tmp/zed-f9p-sync-data.sock"; //location of the interprocess socket(used to communicate with nodejs server)
 
         //Ublox f9p gps module
-        static SFE_UBLOX_GPS myGPS;
+        static SFE_UBLOX_GPS _myGPS;
 
         //Gps Module and NTRIP Caster settings
         static string _port = "";           //port the module is connected to (COM#) or ttyACM#
@@ -62,7 +66,9 @@ namespace Zedf9p
         static int _rtcmSurveyTime;         //minimum time required for the survey to complete
 
         // f9p socket for interapplication communication with node express server
-        static Socket _serverAppSocket;
+        static Socket _nmeaDataSocket;
+        static Socket _rtcmDataSocket;
+        static Socket _syncDataSocket;
 
 
         async static Task Main(string[] args)
@@ -74,42 +80,45 @@ namespace Zedf9p
                 Console.WriteLine("Hello F9P!");
 
                 //start interprocess communication
-                connectF9pSocket();
+                connectDataSockets();
 
                 //if command line parameter for server was passed
                 if (_server)
                 {
                     //start NTRIP server (base station)
-                    configureGpsAsNtripServer(_rtcmAccuracy, _rtcmSurveyTime);
+                    await configureGpsAsNtripServer(_rtcmAccuracy, _rtcmSurveyTime);
 
-                    //if base station configures successfully start pulling data from it
-                    while (myGPS != null)
+                    while (_myGPS != null)
                     {
-                        myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
+                        //if base station configures successfully start pulling data from it
+                        _myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
 
                         Thread.Sleep(10);
                     }
                 }
-
-                if (_client)
+                else if (_client)
                 {
-                    ////start NTRIP server (base station)
-                    //configureGpsAsNtripServer(_rtcmAccuracy, _rtcmSurveyTime);
+                    //start NTRIP client (rover)
+                    await configureGpsAsNtripClient(_rtcmAccuracy, _rtcmSurveyTime);
 
-                    ////if base station configures successfully start pulling data from it
-                    //while (myGPS != null)
-                    //{
-                    //    myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
+                    while (_ntripCasterSocket != null && _ntripCasterSocket.Connected)
+                    {
+                        var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
+                        //var ntripResponseMessage = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
 
-                    //    Thread.Sleep(10);
-                    //}
+                        Thread.Sleep(10);
+                    }
+                }
+                else 
+                {
+                    Console.WriteLine("No application mode selected, exiting.....");
                 }
 
                 Environment.Exit(0);
             }
             catch (UnauthorizedAccessException uae)
             {
-                Console.WriteLine("UnauthorizedAccessException happened");
+                Console.WriteLine("UnauthorizedAccessException happened: " + uae.Message);
             }
             catch (TimeoutException te)
             {
@@ -126,10 +135,22 @@ namespace Zedf9p
             finally
             {
                 // in the end, disconnect and close the socket to cleanup
-                if (_serverAppSocket != null)
+                if (_rtcmDataSocket != null)
                 {
-                    _serverAppSocket.Disconnect(false);
-                    _serverAppSocket.Close();
+                    _rtcmDataSocket.Disconnect(false);
+                    _rtcmDataSocket.Close();
+                }
+                
+                if (_nmeaDataSocket != null)
+                {
+                    _nmeaDataSocket.Disconnect(false);
+                    _nmeaDataSocket.Close();
+                }
+                
+                if (_syncDataSocket != null)
+                {
+                    _syncDataSocket.Disconnect(false);
+                    _syncDataSocket.Close();
                 }
 
                 if (_ntripCasterSocket != null)
@@ -165,67 +186,124 @@ namespace Zedf9p
         }
 
         //connect to f9p socket for interprocess communication
-        static void connectF9pSocket()
+        static void connectDataSockets()
         {
             try
             {
+                Console.WriteLine("trying to connect to interpsrocess socket "+_rtcmDataSocketLocation+"...");
 
                 //Client socket for HTTP server running on Node
-                _serverAppSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                _rtcmDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                _syncDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                _nmeaDataSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
 
-                var unixEndpoint = new UnixEndPoint("/tmp/Zedf9p.sock"); // this address is where the socket exists
-
-                _serverAppSocket.Connect(unixEndpoint); // connect to the socket                 
+                //Unix endpoint creates the address where the socket exists
+                _rtcmDataSocket.Connect(new UnixEndPoint(_rtcmDataSocketLocation)); // connect to the RTCM socket
+                _syncDataSocket.Connect(new UnixEndPoint(_syncDataSocketLocation)); // connect to the SYNC socket                 
+                _nmeaDataSocket.Connect(new UnixEndPoint(_nmeaDataSocketLocation)); // connect to the SYNC socket                 
             }
             catch (SocketException ese)
             {
                 //unable to connect to the socket, spit out error in a console
-                Console.WriteLine(ese.Message);
+                Console.WriteLine("Socket connection error: " + ese.Message);
             }
         }
 
         //Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
-        static async void configureGpsAsNtripServer(float rtcmAccuracy, int rtcmSurveyTime)
+        static async Task configureGpsAsNtripClient(float rtcmAccuracy, int rtcmSurveyTime)
+        {
+            
+            //ATTACH RTCM AND NMEA HANDLERS
+            //myGPS.attachNMEAHandler(processNMEA);
+            //myGPS.attachRTCMHandler(processRTCM);
+
+            //start sending data to ntrip caster
+            await ConnectNtripCaster();
+
+            //send credentials to ntrip caster
+            string ntripWelcomeMessage = "GET /" + _ntripMountpoint + " /HTTP/1.0\r\n";
+            //string ntripWelcomeMessage = "GET /ACASU /HTTP/1.0\r\n";
+            ntripWelcomeMessage += "User-Agent: NTRIP SOLVIT/1.0.1\r\n";
+            //ntripWelcomeMessage += "Accept: */\r\n*";
+            //ntripWelcomeMessage += "Connection: close \r\n";
+            //ntripWelcomeMessage += "\r\n";
+
+            Console.WriteLine("Trying to authenticate to NTRIP caster");
+
+            //Send auth request
+            _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(ntripWelcomeMessage));
+
+            //Receive respone with ICY 200 OK or ERROR - Bad Password
+            var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
+            var ntripResponseMessage = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
+
+            if (ntripResponseMessage.Equals("ICY 200 OK\r\n"))
+            {
+                Console.WriteLine("Authentication passed!");
+            }
+            else
+            {
+                Console.WriteLine("Authentiction error: " + ntripResponseMessage);
+                throw new Exception("NTRIP Authentication error");
+            }
+        }
+
+        //Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
+        static async Task configureGpsAsNtripServer(float rtcmAccuracy, int rtcmSurveyTime)
         {
             if (rtcmAccuracy == 0 || rtcmSurveyTime == 0) throw new InvalidDataException("Survey accuracy or minimum time not provided, cannot continue...");
 
             Console.WriteLine("Create serial port connection for f9p module...");
-            myGPS = new SFE_UBLOX_GPS(_port, _debug);
+            _myGPS = new SFE_UBLOX_GPS(_port, _debug);
 
             Console.WriteLine("Enable Survey Mode, minimum " + rtcmSurveyTime + "sec and minimum accuracy " + rtcmAccuracy + " meters");
 
-            var response = myGPS.enableSurveyMode((ushort)rtcmSurveyTime, rtcmAccuracy); //Enable Survey in, 60 seconds, 5.0m
+            var moduleResponse = _myGPS.enableSurveyMode((ushort)rtcmSurveyTime, rtcmAccuracy); //Enable Survey in, 60 seconds, 5.0m
 
             Console.WriteLine("Enable RTCM Messaging on USB");
 
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1005, SFE_UBLOX_GPS.COM_PORT_USB, 1);
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1074, SFE_UBLOX_GPS.COM_PORT_USB, 1);
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1084, SFE_UBLOX_GPS.COM_PORT_USB, 1);
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1094, SFE_UBLOX_GPS.COM_PORT_USB, 1);
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1124, SFE_UBLOX_GPS.COM_PORT_USB, 1);
-            response &= myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1230, SFE_UBLOX_GPS.COM_PORT_USB, 10);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1005, SFE_UBLOX_GPS.COM_PORT_USB, 1);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1074, SFE_UBLOX_GPS.COM_PORT_USB, 1);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1084, SFE_UBLOX_GPS.COM_PORT_USB, 1);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1094, SFE_UBLOX_GPS.COM_PORT_USB, 1);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1124, SFE_UBLOX_GPS.COM_PORT_USB, 1);
+            moduleResponse &= _myGPS.enableRTCMmessage(SFE_UBLOX_GPS.UBX_RTCM_1230, SFE_UBLOX_GPS.COM_PORT_USB, 10);
+
+            if (!moduleResponse) throw new Exception("Unable to properly configure module");
+
+            //ATTACH NMEA HANDLER
+            _myGPS.attachNMEAHandler(processNmeaServer);
 
             Console.WriteLine("Start requestiong survey status...");
 
             //Begin waiting for survey to complete
-            while (myGPS.svin.valid == false)
+            while (_myGPS.svin.valid == false)
             {
-                response = myGPS.getSurveyStatus(2000); //Query module for SVIN status with 2000ms timeout (req can take a long time)
-                if (response == true)
+
+                //Query module for SVIN status with 2000ms timeout (req can take a long time)
+                moduleResponse = _myGPS.getSurveyStatus(2000);
+
+                //if module response if always true
+                if (moduleResponse)
                 {
                     Console.Write("Time elapsed: ");
-                    Console.Write(myGPS.svin.observationTime);
+                    Console.Write(_myGPS.svin.observationTime);
+                    _syncDataSocket.Send(Encoding.ASCII.GetBytes("SURVEY_TIME:" + _myGPS.svin.observationTime.ToString() + "\r\n"));
 
                     Console.Write(" Accuracy: ");
-                    Console.Write(myGPS.svin.meanAccuracy);
+                    Console.Write(_myGPS.svin.meanAccuracy);
+                    _syncDataSocket.Send(Encoding.ASCII.GetBytes("ACCURACY:"+_myGPS.svin.meanAccuracy.ToString()+"\r\n"));
 
                     Console.Write(" Is Valid?: ");
-                    Console.WriteLine(myGPS.svin.valid);
+                    Console.WriteLine(_myGPS.svin.valid);
+                    _syncDataSocket.Send(Encoding.ASCII.GetBytes("SURVEY_VALID:" + _myGPS.svin.valid.ToString() + "\r\n"));
                 }
                 else
                 {
                     Console.WriteLine("SVIN request failed");
                 }
+
+                _myGPS.checkUblox(); //See if new data is available in COM PORT and consume it
 
                 Thread.Sleep(1000);
             }
@@ -235,68 +313,74 @@ namespace Zedf9p
             //myGPS.setI2COutput(COM_TYPE_UBX | COM_TYPE_RTCM3); //Set the I2C port to output UBX and RTCM sentences (not really an option, turns on NMEA as well)
 
 
-            //ATTACH RTCM AND NMEA HANDLERS
-            myGPS.attachNMEAHandler(processNMEA);
-            myGPS.attachRTCMHandler(processRTCM);
+            //ATTACH RTCM HANDLER            
+            _myGPS.attachRTCMHandler(processRtcmServer);
 
             //start sending data to ntrip caster
-            await StartNtripServer();
-        }
+            await ConnectNtripCaster();
 
-        //Opens the connection to the NTRIP server and starts sending
-        private static async Task StartNtripServer()
-        {
-            if (_ntripServer != null && _ntripMountpoint != null && _ntripPassword != null && _ntripPort != 0)
+            //send credentials to ntrip caster
+            string ntripWelcomeMessage = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
+            ntripWelcomeMessage += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
+
+            //Send auth request
+            _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(ntripWelcomeMessage));
+
+            //Receive respone with ICY 200 OK or ERROR - Bad Password
+            var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
+            var ntripResponseMessage = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen); //take first 30 bytes from response 
+
+            if (ntripResponseMessage.Equals("ICY 200 OK\r\n"))
             {
-
-                var hostEntry = await Dns.GetHostEntryAsync(_ntripServer);
-                var BroadCasterIP = hostEntry.AddressList[0]; //Select correct Address
-                var BroadCasterPort = _ntripPort; //Select correct port 
-
-                //Connect to server
-                _ntripCasterSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                //sckt.Blocking = true;
-                _ntripCasterSocket.Connect(new IPEndPoint(BroadCasterIP, BroadCasterPort));
-
-                //send credentials to ntrip caster
-                string tosend = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
-                tosend += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
-
-                //Send auth request
-                _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(tosend));
-
-                //Receive respone with ICY 200 OK or ERROR - Bad Password
-                var rcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
-                var response = Encoding.ASCII.GetString(ntripIncomingBuffer, 0, rcvLen);
-
-                if (response.Trim().Equals("ICY 200 OK"))
-                {
-                    Console.WriteLine("Authentication passed!");
-                }
-                else
-                {
-                    Console.WriteLine("Authentiction error: " + response);
-                    throw new Exception("NTRIP AUthentication error");
-                }
+                Console.WriteLine("Authentication passed!");
             }
             else
             {
-                throw new Exception("NTRIP Credentials not provided");
-            }
-        }     
-
-        //handler for NMEA data coming from the module
-        static async Task processNMEA(byte incoming)
-        {
-            //send nmea info thru the f9p socket to the http server app
-            if (_serverAppSocket != null && _serverAppSocket.Connected) {
-                _serverAppSocket.Send(new byte[1] { incoming });
+                Console.WriteLine("Authentiction error: " + ntripResponseMessage);
+                throw new Exception("NTRIP Authentication error");
             }
         }
 
-        //handler for RTCM data coming from the module
-        static async Task processRTCM(byte incoming)
+        //Opens the connection to the NTRIP (creates a socket)
+        private static async Task ConnectNtripCaster()
         {
+            if (_ntripServer != null && _ntripMountpoint != null && _ntripPassword != null && _ntripPort != 0)
+            {
+                //parse host entry to get a IP address for connection
+                var hostEntry = await Dns.GetHostEntryAsync(_ntripServer);
+
+                //Connect to server
+                _ntripCasterSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+                Console.WriteLine("Trying to connect to NTRIP caster");
+
+                _ntripCasterSocket.Connect(new IPEndPoint(hostEntry.AddressList[0], _ntripPort));            
+            }
+            else
+            {
+                throw new Exception("NTRIP configuration or credentials not provided");
+            }
+        }     
+
+        //handler for NMEA data coming from the module when creating server (-server)
+        static async Task processNmeaServer(byte incoming)
+        {
+            //send nmea info thru socket to the http server app
+            if (_nmeaDataSocket != null && _nmeaDataSocket.Connected) {
+                _nmeaDataSocket.Send(new byte[1] { incoming });
+            }
+        }
+
+        //handler for RTCM data coming from the module when creating server (-server)
+        static async Task processRtcmServer(byte incoming)
+        {
+
+            //send rtcm info thru socket to the http server app
+            if (_rtcmDataSocket != null && _rtcmDataSocket.Connected)
+            {
+                _rtcmDataSocket.Send(new byte[1] { incoming });
+            }
+
             //check if ntrip socket is defined and connected
             if (_ntripCasterSocket != null && _ntripCasterSocket.Connected)
             {
