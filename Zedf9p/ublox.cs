@@ -403,7 +403,7 @@ namespace UBLOX
         {
             public bool active;
             public bool valid;
-            public ushort observationTime;
+            public uint observationTime;
             public float meanAccuracy;
         };
 
@@ -565,7 +565,7 @@ namespace UBLOX
         }
 
         //Stop Survey-In for NEO-M8P
-        bool disableSurveyMode(ushort maxWait)
+        bool disableSurveyMode(ushort maxWait = defaultMaxWait)
         {
             return setSurveyMode(SVIN_MODE_DISABLE, 0, 0, maxWait);
         }
@@ -587,25 +587,15 @@ namespace UBLOX
             packetCfg.startingSpot = 0;
 
             if (sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
-                return (false);                                                         //If command send fails then bail
+                return false;                                                         //If command send fails then bail
 
             //We got a response, now parse the bits into the svin structure
 
-            //dur (Passed survey-in observation time) is U4 (uint) seconds. We truncate to 16 bits
-            //(waiting more than 65535 seconds (18.2 hours) seems excessive!)
-            uint tmpObsTime = extractLong(8);
-            if (tmpObsTime <= 0xFFFF)
-            {
-                svin.observationTime = (ushort)tmpObsTime;
-            }
-            else
-            {
-                svin.observationTime = 0xFFFF;
-            }
+            //dur (Passed survey-in observation time) is U4 (uint) seconds.
+            svin.observationTime = extractLong(8);
 
             // meanAcc is U4 (uint) in 0.1mm. We convert this to float.
-            uint tempFloat = extractLong(28);
-            svin.meanAccuracy = tempFloat / 10000.0F; //Convert 0.1mm to m
+            svin.meanAccuracy = extractLong(28) / 10000.0F; //Convert 0.1mm to m
 
             svin.valid = Convert.ToBoolean(payloadCfg[36]);  //1 if survey-in position is valid, 0 otherwise
             svin.active = Convert.ToBoolean(payloadCfg[37]); //1 if survey-in in progress, 0 otherwise
@@ -613,11 +603,11 @@ namespace UBLOX
             return true;
         }
 
-        //Control Survey-In for NEO-M8P
+        //Control Survey-In for ZED-F9P
         bool setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait)
         {
-            if (getSurveyMode(maxWait) == false) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
-                return (false);
+            if (getReceiverMode(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
+                return false;
 
             packetCfg.cls = UBX_CLASS_CFG;
             packetCfg.id = UBX_CFG_TMODE3;
@@ -625,8 +615,8 @@ namespace UBLOX
             packetCfg.startingSpot = 0;
 
             //Clear packet payload
-            for (byte x = 0; x < packetCfg.len; x++)
-                packetCfg.payload[x] = 0;
+            Array.Clear(packetCfg.payload, 0, packetCfg.len);
+            //for (byte x = 0; x < packetCfg.len; x++) packetCfg.payload[x] = 0;
 
             //payloadCfg should be loaded with poll response. Now modify only the bits we care about
             payloadCfg[2] = mode; //Set mode. Survey-In and Disabled are most common. Use ECEF (not LAT/LON/ALT).
@@ -647,15 +637,36 @@ namespace UBLOX
             return sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
 
+
+        public class UbloxDataPacket {
+            public byte[] request { get; set; }
+            public byte[] response { get; set; }
+        }
+
+        public class ReceiverMode : UbloxDataPacket {
+            public short getMode() => BitConverter.ToInt16(response.Skip(2).Take(2).ToArray()); //0-disabled, 1-survey-in, 2-fixed mode
+            public float getAccuracyLimit() => BitConverter.ToInt32(response.Skip(28).Take(4).ToArray())/10000; //Accuracy contained in 0.1mm in a module, convert to meters
+        }
+
         //Get the current TimeMode3 settings - these contain survey in statuses
-        bool getSurveyMode(ushort maxWait)
+        public ReceiverMode getReceiverMode(ushort maxWait = defaultMaxWait)
         {
             packetCfg.cls = UBX_CLASS_CFG;
             packetCfg.id = UBX_CFG_TMODE3;
             packetCfg.len = 0;
             packetCfg.startingSpot = 0;
 
-            return sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED; // We are expecting data and an ACK
+            if (sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+            {
+                return new ReceiverMode()
+                {
+                    response = payloadCfg.Take(40).ToArray() //length of date in this packet is 40 bytes
+                };
+            }
+            else
+            {
+                return null;
+            }
         }
 
         //Much of this configuration is not documented and instead discerned from u-center binary console
@@ -1521,42 +1532,25 @@ namespace UBLOX
             //  _debugSerial->print(incoming, HEX);
             //  if(rtcmFrameCounter % 16 == 0) _debugSerial->println();
 
-            if (_rtcmHandler != null) _rtcmHandler(incoming);
+            _rtcmHandler?.Invoke(incoming);
         }
 
         //Given a spot in the payload array, extract four bytes and build a long
-        uint extractLong(byte spotToStart)
-        {
-            uint val = 0;
-            val |= (uint)payloadCfg[spotToStart + 0] << 8 * 0;
-            val |= (uint)payloadCfg[spotToStart + 1] << 8 * 1;
-            val |= (uint)payloadCfg[spotToStart + 2] << 8 * 2;
-            val |= (uint)payloadCfg[spotToStart + 3] << 8 * 3;
-            return (val);
-        }
+        uint extractLong(byte spotToStart) => BitConverter.ToUInt32(payloadCfg, spotToStart);
 
         //Given a spot in the payload array, extract two bytes and build an int
-        ushort extractInt(byte spotToStart)
-        {
-            ushort val = 0;
-            val |= (ushort)((ushort)(payloadCfg[spotToStart + 0] << 8) * 0);
-            val |= (ushort)((ushort)(payloadCfg[spotToStart + 1] << 8) * 1);
-            return (val);
-        }
+        ushort extractInt(byte spotToStart) => BitConverter.ToUInt16(payloadCfg, spotToStart);
 
         //Given a spot, extract a byte from the payload
-        byte extractByte(byte spotToStart)
-        {
-            return (payloadCfg[spotToStart]);
-        }
+        byte extractByte(byte spotToStart) => payloadCfg[spotToStart];
 
         //Given a spot, extract a signed 8-bit value from the payload
-        byte extractSignedChar(byte spotToStart)
-        {
-            return ((byte)payloadCfg[spotToStart]);
-        }
+        byte extractSignedChar(byte spotToStart) => payloadCfg[spotToStart];
 
+        //Attach handler function to NMEA bytes received
         public void attachNMEAHandler(Func<byte, Task> handler) => _nmeaHandler = handler;
+
+        //Attach handler function to RTCM bytes received
         public void attachRTCMHandler(Func<byte, Task> handler) => _rtcmHandler = handler;
     }
 }

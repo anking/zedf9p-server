@@ -281,6 +281,14 @@ namespace Zedf9p
             //ATTACH NMEA HANDLER
             _myGPS.attachNMEAHandler(processNmeaServer);
 
+            //Get receiver mode
+            var receiverMode = _myGPS.getReceiverMode();
+            Console.WriteLine("Accuracy: " + receiverMode.getAccuracyLimit());
+            _syncDataSocket.Send(Encoding.ASCII.GetBytes("SET_ACCURACY:" + receiverMode.getAccuracyLimit() + "\r\n"));
+            Console.WriteLine("Mode: " + receiverMode.getMode());
+            _syncDataSocket.Send(Encoding.ASCII.GetBytes("RECEIVER_MODE:" + receiverMode.getMode() + "\r\n"));
+
+
             Console.WriteLine("Start requestiong survey status...");
 
             //Begin waiting for survey to complete
