@@ -329,6 +329,14 @@ namespace UBLOX
         const uint VAL_RXM_PMREQ_WAKEUPSOURCE_EXTINT1 = 0x00000040; // extint1
         const uint VAL_RXM_PMREQ_WAKEUPSOURCE_SPICS = 0x00000080;   // spics
 
+        long lastCheck = 0;
+        bool autoPVT = false;              //Whether autoPVT is enabled or not
+        bool autoPVTImplicitUpdate = true; // Whether autoPVT is triggered by accessing stale data (=true) or by a call to checkUblox (=false)
+        bool autoHPPOSLLH = false;             //Whether autoHPPOSLLH is enabled or not
+        bool autoHPPOSLLHImplicitUpdate = true; // Whether autoHPPOSLLH is triggered by accessing stale data (=true) or by a call to checkUblox (=false)
+        ushort ubxFrameCounter;			  //It counts all UBX frame. [Fixed header(2bytes), CLS(1byte), ID(1byte), length(2bytes), payload(x bytes), checksums(2bytes)]
+
+
         public enum ReceiverModeEnum
         {
             Disabled = 0,
@@ -424,7 +432,6 @@ namespace UBLOX
         };
 
         SentenceTypes currentSentence = SentenceTypes.NONE;
-        short ubxFrameCounter;            //It counts all UBX frame. [Fixed header(2bytes), CLS(1byte), ID(1byte), length(2bytes), payload(x bytes), checksums(2bytes)]
         short rtcmFrameCounter = 0; //Tracks the type of incoming byte inside RTCM frame
 
         //Flag if this packet is unrequested (and so should be ignored and not copied into packetCfg or packetAck)
@@ -470,8 +477,8 @@ namespace UBLOX
         int elipsoid;            // Height above ellipsoid in mm (Typo! Should be eLLipsoid! **Uncorrected for backward-compatibility.**)
         int meanSeaLevel;        // Height above mean sea level in mm
         int geoidSeparation;     // This seems to only be provided in NMEA GGA and GNS messages
-        uint horizontalAccuracy; // mm * 10^-1 (i.e. 0.1mm)
-        uint verticalAccuracy;   // mm * 10^-1 (i.e. 0.1mm)
+        public uint horizontalAccuracy { get; set; } // mm * 10^-1 (i.e. 0.1mm)
+        public uint verticalAccuracy { get; set; }   // mm * 10^-1 (i.e. 0.1mm)
         byte elipsoidHp;           // High precision component of the height above ellipsoid in mm * 10^-1 (Deliberate typo! Should be eLLipsoidHp!)
         byte meanSeaLevelHp;       // High precision component of Height above mean sea level in mm * 10^-1
         byte highResLatitudeHp;    // High precision component of latitude: Degrees * 10^-9
@@ -1438,6 +1445,8 @@ namespace UBLOX
                     }
                     else if (msg.id == UBX_NAV_HPPOSLLH && msg.len == 36)
                     {
+                        Console.WriteLine("UBX_NAV_HPPOSLLH message received");
+
                         timeOfWeek = extractLong(4);
                         highResLongitude = (int)extractLong(8);
                         highResLatitude = (int)extractLong(12);
@@ -1561,5 +1570,54 @@ namespace UBLOX
 
         //Attach handler function to RTCM bytes received
         public void attachRTCMHandler(Func<byte, Task> handler) => _rtcmHandler = handler;
+
+
+
+        //Get the current 3D high precision positional accuracy - a fun thing to watch
+        //Returns a long representing the 3D accuracy in millimeters
+        async public Task<uint> getPositionAccuracy(ushort maxWait = 1100)
+        {
+            packetCfg.cls = UBX_CLASS_NAV;
+            packetCfg.id = UBX_NAV_HPPOSECEF;
+            packetCfg.len = 0;
+            packetCfg.startingSpot = 0;
+
+            if (await sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are only expecting data (no ACK)
+                return 0;                                                           //If command send fails then bail
+
+            uint tempAccuracy = extractLong(24); //We got a response, now extract a long beginning at a given position
+
+            if ((tempAccuracy % 10) >= 5)
+                tempAccuracy += 5; //Round fraction of mm up to next mm if .5 or above
+            tempAccuracy /= 10;  //Convert 0.1mm units to mm
+
+            return tempAccuracy;
+        }
+
+        //Enable or disable automatic navigation message generation by the GPS. This changes the way getHPPOSLLH
+        //works.
+        public async Task<bool> setAutoHPPOSLLH(bool enable, ushort maxWait = defaultMaxWait) => await setAutoHPPOSLLH(enable, true, maxWait);
+
+        //Enable or disable automatic navigation message generation by the GPS. This changes the way getHPPOSLLH
+        //works.
+        public async Task<bool> setAutoHPPOSLLH(bool enable, bool implicitUpdate, ushort maxWait = defaultMaxWait)
+        {
+            packetCfg.cls = UBX_CLASS_CFG;
+            packetCfg.id = UBX_CFG_MSG;
+            packetCfg.len = 3;
+            packetCfg.startingSpot = 0;
+            payloadCfg[0] = UBX_CLASS_NAV;
+            payloadCfg[1] = UBX_NAV_HPPOSLLH;
+            payloadCfg[2] = enable ? (byte)1 : (byte)0; // rate relative to navigation freq.
+
+            bool ok = await sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
+            if (ok)
+            {
+                autoHPPOSLLH = enable;
+                autoHPPOSLLHImplicitUpdate = implicitUpdate;
+            }
+            highResModuleQueried.all = false;
+            return ok;
+        }
     }
 }

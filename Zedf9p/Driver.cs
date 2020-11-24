@@ -105,6 +105,7 @@ namespace Zedf9p.Core
         /// <returns></returns>
         async public Task Run()
         {
+            //Running server operations
             if (_mode == OperationMode.Server)
             {
                 while (_myGPS != null)
@@ -118,18 +119,41 @@ namespace Zedf9p.Core
                     Thread.Sleep(10);
                 }
             }
+            // Running client operations
             else if (_mode == OperationMode.Client)
             {
+                var lastRTCMdataReceived = Utils.millis();
+
+                //configure for auto High-res messages
+                await _myGPS.setAutoHPPOSLLH(true);
+
                 while (_ntripCasterSocket != null && _syncDataSocket != null && _ntripCasterSocket.Connected && _syncDataSocket.isConnected())
                 {
                     var ntripRcvLen = _ntripCasterSocket.Receive(ntripIncomingBuffer);
 
-                    Console.WriteLine("Sending RTCM info to module");
+                    if (ntripRcvLen > 0)
+                    {
+                        await _myGPS.getPositionAccuracy();
 
-                    _myGPS.send(ntripIncomingBuffer, ntripRcvLen);
+                        
 
-                    //if base station configures successfully start pulling data from it
-                    _myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
+                        Console.WriteLine("Sending RTCM info to module. Last Accuracy: " + _myGPS.horizontalAccuracy + " / " + await _myGPS.getPositionAccuracy());
+
+                        _myGPS.send(ntripIncomingBuffer, ntripRcvLen);
+
+                        //if base station configures successfully start pulling data from it
+                        await _myGPS.checkUblox(); //See if new data is available. Process bytes as they come in.
+
+                        lastRTCMdataReceived = Utils.millis();
+                    } 
+                    else
+                    {
+                        //if no RTCM data received for longer than 10 minutes send error to UI
+                        if (Utils.millis() > lastRTCMdataReceived + (60 * 10 * 1000))
+                        {
+                            _syncDataSocket.SendLine("NTRIP_DATA_RCV_TIMEOUT");
+                        }
+                    }
 
                     Thread.Sleep(10);
                 }
@@ -229,8 +253,11 @@ namespace Zedf9p.Core
             }
             else
             {
-                Console.WriteLine("Authentiction error: " + ntripResponseMessage);
-                throw new Exception("NTRIP Authentication error or station down");
+                //send error response back to sync socket
+                _syncDataSocket.SendLine("NTRIP_CONNECTION_ERROR");
+
+                Console.WriteLine("NTRIP Response: " + ntripResponseMessage);                
+                throw new Exception("NTRIP Authentication error or station down");                
             }
 
             //ATTACH NMEA HANDLER
