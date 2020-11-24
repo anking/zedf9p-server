@@ -11,6 +11,7 @@ using System.IO.Ports;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Zedf9p;
 
 namespace UBLOX
 {
@@ -328,6 +329,13 @@ namespace UBLOX
         const uint VAL_RXM_PMREQ_WAKEUPSOURCE_EXTINT1 = 0x00000040; // extint1
         const uint VAL_RXM_PMREQ_WAKEUPSOURCE_SPICS = 0x00000080;   // spics
 
+        public enum ReceiverModeEnum
+        {
+            Disabled = 0,
+            SurveyIn = 1,
+            FixedMode = 2
+        }
+
         public enum dynModel // Possible values for the dynamic platform model, which provide more accuract position output for the situation. Description extracted from ZED-F9P Integration Manual
         {
             DYN_MODEL_PORTABLE = 0, //Applications with low acceleration, e.g. portable devices. Suitable for most situations.
@@ -559,21 +567,21 @@ namespace UBLOX
         }
 
         //Begin Survey-In for NEO-M8P
-        public bool enableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = defaultMaxWait)
+        public async Task<bool> enableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = defaultMaxWait)
         {
-            return setSurveyMode(SVIN_MODE_ENABLE, observationTime, requiredAccuracy, maxWait);
+            return await setSurveyMode(SVIN_MODE_ENABLE, observationTime, requiredAccuracy, maxWait);
         }
 
         //Stop Survey-In for NEO-M8P
-        bool disableSurveyMode(ushort maxWait = defaultMaxWait)
+        public async Task<bool> disableSurveyMode(ushort maxWait = defaultMaxWait)
         {
-            return setSurveyMode(SVIN_MODE_DISABLE, 0, 0, maxWait);
+            return await setSurveyMode(SVIN_MODE_DISABLE, 0, 0, maxWait);
         }
 
         //Reads survey in status and sets the global variables
         //for status, position valid, observation time, and mean 3D StdDev
         //Returns true if commands was successful
-        public bool getSurveyStatus(ushort maxWait)
+        public async Task<bool> getSurveyStatus(ushort maxWait)
         {
             //Reset variables
             svin.active = false;
@@ -586,7 +594,7 @@ namespace UBLOX
             packetCfg.len = 0;
             packetCfg.startingSpot = 0;
 
-            if (sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+            if (await sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
                 return false;                                                         //If command send fails then bail
 
             //We got a response, now parse the bits into the svin structure
@@ -604,7 +612,7 @@ namespace UBLOX
         }
 
         //Control Survey-In for ZED-F9P
-        bool setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait)
+        async Task<bool> setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait)
         {
             if (getReceiverMode(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
@@ -634,46 +642,46 @@ namespace UBLOX
             payloadCfg[30] = (byte)(svinAccLimit >> 16);
             payloadCfg[31] = (byte)(svinAccLimit >> 24);
 
-            return sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
+            return await sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
 
 
         public class UbloxDataPacket {
-            public byte[] request { get; set; }
-            public byte[] response { get; set; }
+            public byte[] payload { get; set; }
         }
 
         public class ReceiverMode : UbloxDataPacket {
-            public short getMode() => BitConverter.ToInt16(response.Skip(2).Take(2).ToArray()); //0-disabled, 1-survey-in, 2-fixed mode
-            public float getAccuracyLimit() => BitConverter.ToInt32(response.Skip(28).Take(4).ToArray())/10000; //Accuracy contained in 0.1mm in a module, convert to meters
+            /// <summary>
+            /// Get receiver mode. 0-disabled, 1-survey-in, 2-fixed mode
+            /// </summary>
+            /// <returns></returns>
+            public ReceiverModeEnum getMode() =>  (ReceiverModeEnum)BitConverter.ToInt16(payload.Skip(2).Take(2).ToArray());
+
+            /// <summary>
+            /// Get receiver accuracy in meters
+            /// </summary>
+            /// <returns></returns>
+            public float getAccuracyLimit() => BitConverter.ToInt32(payload.Skip(28).Take(4).ToArray())/10000; //Accuracy contained in 0.1mm in a module, convert to meters
         }
 
         //Get the current TimeMode3 settings - these contain survey in statuses
-        public ReceiverMode getReceiverMode(ushort maxWait = defaultMaxWait)
+        public async Task<ReceiverMode> getReceiverMode(ushort maxWait = defaultMaxWait)
         {
             packetCfg.cls = UBX_CLASS_CFG;
             packetCfg.id = UBX_CFG_TMODE3;
             packetCfg.len = 0;
             packetCfg.startingSpot = 0;
 
-            if (sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
-            {
-                return new ReceiverMode()
-                {
-                    response = payloadCfg.Take(40).ToArray() //length of date in this packet is 40 bytes
-                };
-            }
-            else
-            {
-                return null;
-            }
+            return await sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED // We are expecting data and an ACK
+            ? new ReceiverMode() { payload = payloadCfg.Take(40).ToArray() }//length of date in this packet is 40 bytes
+            : null;
         }
 
         //Much of this configuration is not documented and instead discerned from u-center binary console
-        public bool enableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = defaultMaxWait) => configureMessage(UBX_RTCM_MSB, messageNumber, portID, sendRate, maxWait);
+        public async Task<bool> enableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = defaultMaxWait) => await configureMessage(UBX_RTCM_MSB, messageNumber, portID, sendRate, maxWait);
 
         //Configure a given message type for a given port (UART1, I2C, SPI, etc)
-        bool configureMessage(byte msgClass, byte msgID, byte portID, byte sendRate, ushort maxWait)
+        async Task<bool> configureMessage(byte msgClass, byte msgID, byte portID, byte sendRate, ushort maxWait)
         {
             //Poll for the current settings for a given message
             packetCfg.cls = UBX_CLASS_CFG;
@@ -685,7 +693,7 @@ namespace UBLOX
             payloadCfg[1] = msgID;
 
             //This will load the payloadCfg array with current settings of the given register
-            if (sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+            if (await sendCommand(packetCfg, maxWait) != sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
                 return false;                                                       //If command send fails then bail
 
             //Now send it back with new mods
@@ -694,11 +702,11 @@ namespace UBLOX
             //payloadCfg is now loaded with current bytes. Change only the ones we need to
             payloadCfg[2 + portID] = sendRate; //Send rate is relative to the event a message is registered on. For example, if the rate of a navigation message is set to 2, the message is sent every 2nd navigation solution.
 
-            return sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
+            return await sendCommand(packetCfg, maxWait) == sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
 
         //Given a packet and payload, send everything including CRC bytes via I2C port
-        sfe_ublox_status_e sendCommand(ubxPacket outgoingUBX, ushort maxWait)
+        async Task<sfe_ublox_status_e> sendCommand(ubxPacket outgoingUBX, ushort maxWait)
         {
             sfe_ublox_status_e retVal = sfe_ublox_status_e.SFE_UBLOX_STATUS_SUCCESS;
 
@@ -710,10 +718,13 @@ namespace UBLOX
                 //printPacket(outgoingUBX);
             }
 
+            _serialPort.DiscardInBuffer();
+
             sendSerialCommand(outgoingUBX);
 
             if (maxWait > 0)
-            {
+            {               
+
                 //Depending on what we just sent, either we need to look for an ACK or not
                 if (outgoingUBX.cls == UBX_CLASS_CFG)
                 {
@@ -721,7 +732,7 @@ namespace UBLOX
                     {
                         Console.WriteLine("sendCommand: Waiting for ACK response");
                     }
-                    retVal = waitForACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
+                    retVal = await waitForACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
                 }
                 else
                 {
@@ -729,7 +740,7 @@ namespace UBLOX
                     {
                         Console.WriteLine("sendCommand: Waiting for No ACK response");
                     }
-                    retVal = waitForNoACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
+                    retVal = await waitForNoACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
                 }
             }
 
@@ -791,9 +802,7 @@ namespace UBLOX
             }
         }
 
-        long millis() => DateTimeOffset.Now.ToUnixTimeMilliseconds();
-
-        sfe_ublox_status_e waitForACKResponse(ubxPacket outgoingUBX, byte requestedClass, byte requestedID, ushort maxTime)
+        async Task<sfe_ublox_status_e> waitForACKResponse(ubxPacket outgoingUBX, byte requestedClass, byte requestedID, ushort maxTime)
         {
             outgoingUBX.valid = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED; //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
             packetAck.valid = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
@@ -802,10 +811,10 @@ namespace UBLOX
             packetAck.classAndIDmatch = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
             packetBuf.classAndIDmatch = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
 
-            long startTime = millis();
-            while (millis() - startTime < maxTime)
+            long startTime = Utils.millis();
+            while (Utils.millis() - startTime < maxTime)
             {
-                if (checkUbloxSerial(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
+                if (await checkUbloxSerial(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
                 {
                     // If both the outgoingUBX->classAndIDmatch and packetAck.classAndIDmatch are VALID
                     // and outgoingUBX->valid is _still_ VALID and the class and ID _still_ match
@@ -814,7 +823,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: valid data and valid ACK received after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: valid data and valid ACK received after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED); //We received valid data and a correct ACK!
                     }
@@ -828,7 +837,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: valid ACK (without data) after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: valid ACK (without data) after " + (Utils.millis() - startTime) + " msec");
                         }
                         return sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_SENT; //We got an ACK but no data...
                     }
@@ -844,7 +853,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: data being OVERWRITTEN after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: data being OVERWRITTEN after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_OVERWRITTEN); // Data was valid but has been or is being overwritten
                     }
@@ -855,7 +864,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: CRC failed after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: CRC failed after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_CRC_FAIL); //Checksum fail
                     }
@@ -871,7 +880,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: data was NOTACKNOWLEDGED (NACK) after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: data was NOTACKNOWLEDGED (NACK) after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_COMMAND_NACK); //We received a NACK!
                     }
@@ -883,7 +892,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: VALID data and INVALID ACK received after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: VALID data and INVALID ACK received after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED); //We received valid data and an invalid ACK!
                     }
@@ -894,7 +903,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: INVALID data and INVALID ACK received after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForACKResponse: INVALID data and INVALID ACK received after " + (Utils.millis() - startTime) + " msec");
                         }
                         return (sfe_ublox_status_e.SFE_UBLOX_STATUS_FAIL); //We received invalid data and an invalid ACK!
                     }
@@ -905,7 +914,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForACKResponse: valid data after " + (millis() - startTime) + " msec. Waiting for ACK.");
+                            Console.WriteLine("waitForACKResponse: valid data after " + (Utils.millis() - startTime) + " msec. Waiting for ACK.");
                         }
                     }
 
@@ -913,7 +922,7 @@ namespace UBLOX
 
                 //delayMicroseconds(500);
                 Thread.Sleep(1);
-            } //while (millis() - startTime < maxTime)
+            } //while (Utils.millis() - startTime < maxTime)
 
             // We have timed out...
             // If the outgoingUBX->classAndIDmatch is VALID then we can take a gamble and return DATA_RECEIVED
@@ -922,14 +931,14 @@ namespace UBLOX
             {
                 if (_debug == true)
                 {
-                    Console.WriteLine("waitForACKResponse: TIMEOUT with valid data after " + (millis() - startTime) + " msec. ");
+                    Console.WriteLine("waitForACKResponse: TIMEOUT with valid data after " + (Utils.millis() - startTime) + " msec. ");
                 }
                 return sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED; //We received valid data... But no ACK!
             }
 
             if (_debug == true)
             {
-                Console.WriteLine("waitForACKResponse: TIMEOUT after " + (millis() - startTime) + " msec.");
+                Console.WriteLine("waitForACKResponse: TIMEOUT after " + (Utils.millis() - startTime) + " msec.");
             }
 
             return sfe_ublox_status_e.SFE_UBLOX_STATUS_TIMEOUT;
@@ -943,7 +952,7 @@ namespace UBLOX
         //Returns SFE_UBLOX_STATUS_TIMEOUT if we timed out
         //Returns SFE_UBLOX_STATUS_DATA_OVERWRITTEN if we got an a valid packetCfg but that the packetCfg has been
         // or is currently being overwritten (remember that Serial data can arrive very slowly)
-        sfe_ublox_status_e waitForNoACKResponse(ubxPacket outgoingUBX, byte requestedClass, byte requestedID, ushort maxTime)
+        async Task<sfe_ublox_status_e> waitForNoACKResponse(ubxPacket outgoingUBX, byte requestedClass, byte requestedID, ushort maxTime)
         {
             outgoingUBX.valid = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED; //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
             packetAck.valid = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
@@ -952,10 +961,10 @@ namespace UBLOX
             packetAck.classAndIDmatch = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
             packetBuf.classAndIDmatch = sfe_ublox_packet_validity_e.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
 
-            long startTime = millis();
-            while (millis() - startTime < maxTime)
+            long startTime = Utils.millis();
+            while (Utils.millis() - startTime < maxTime)
             {
-                if (checkUbloxSerial(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
+                if (await checkUbloxSerial(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
                 {
 
                     // If outgoingUBX->classAndIDmatch is VALID
@@ -965,7 +974,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForNoACKResponse: valid data with CLS/ID match after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForNoACKResponse: valid data with CLS/ID match after " + (Utils.millis() - startTime) + " msec");
                         }
                         return sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_RECEIVED; //We received valid data!
                     }
@@ -981,7 +990,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForNoACKResponse: data being OVERWRITTEN after " + (millis() - startTime) + " msec");
+                            Console.WriteLine("waitForNoACKResponse: data being OVERWRITTEN after " + (Utils.millis() - startTime) + " msec");
                         }
                         return sfe_ublox_status_e.SFE_UBLOX_STATUS_DATA_OVERWRITTEN; // Data was valid but has been or is being overwritten
                     }
@@ -1001,7 +1010,7 @@ namespace UBLOX
                     {
                         if (_debug == true)
                         {
-                            Console.WriteLine("waitForNoACKResponse: CLS/ID match but failed CRC after "+(millis() - startTime)+" msec");
+                            Console.WriteLine("waitForNoACKResponse: CLS/ID match but failed CRC after "+(Utils.millis() - startTime)+" msec");
                         }
                         return sfe_ublox_status_e.SFE_UBLOX_STATUS_CRC_FAIL; //We received invalid data
                     }
@@ -1012,14 +1021,14 @@ namespace UBLOX
 
             if (_debug == true)
             {
-                Console.WriteLine("waitForNoACKResponse: TIMEOUT after "+(millis() - startTime)+" msec. No packet received.");
+                Console.WriteLine("waitForNoACKResponse: TIMEOUT after "+(Utils.millis() - startTime)+" msec. No packet received.");
             }
 
             return sfe_ublox_status_e.SFE_UBLOX_STATUS_TIMEOUT;
         }
 
         //Checks Serial for data, passing any new bytes to process()
-        bool checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
+        async Task<bool> checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
         {
             while (_serialPort.BytesToRead > 0)
             {
@@ -1028,16 +1037,16 @@ namespace UBLOX
                 var bytesReceivedLen = _serialPort.Read(buff, 0, MAX_PAYLOAD_SIZE);
 
                 for (int i = 0; i < bytesReceivedLen; i++) {
-                    process(buff[i], incomingUBX, requestedClass, requestedID);
+                    await process(buff[i], incomingUBX, requestedClass, requestedID);
                 }
             }
             return true;
         }
 
         //Called regularly to check for available bytes on the user' specified port
-        public bool checkUblox(byte requestedClass = 0, byte requestedID = 0)
+        public async Task<bool> checkUblox(byte requestedClass = 0, byte requestedID = 0)
         {
-            return checkUbloxSerial(packetCfg, requestedClass, requestedID);
+            return await checkUbloxSerial(packetCfg, requestedClass, requestedID);
         }
 
         //Write data into GPS device
@@ -1048,7 +1057,7 @@ namespace UBLOX
 
         //Processes NMEA and UBX binary sentences one byte at a time
         //Take a given byte and file it into the proper array
-        void process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID)
+        async Task process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID)
         {
             if ((currentSentence == SentenceTypes.NONE) || (currentSentence == SentenceTypes.NMEA))
             {
