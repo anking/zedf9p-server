@@ -26,21 +26,23 @@ using System.Threading.Tasks;
 using UBLOX;
 using Zedf9p.Communication;
 using Zedf9p.Core;
+using Zedf9p.Exceptions;
+using Zedf9p.Enums;
 
 namespace Zedf9p
 {
     //application input params
     class InputParams
     {
-        public string port = "";           //port the module is connected to (COM#) or ttyACM#
-        public string ntripServer;         //caster server
-        public int ntripPort;              //caster port
-        public string ntripMountpoint;     //caster mountpoint
-        public string ntripPassword;       //caster password
-        public float rtcmAccuracy;         //Minimum accuracy to be accepted before survey completes in meters (3.000F)/float
-        public int rtcmSurveyTime;         //minimum time required for the survey to complete
-        public Driver.OperationMode mode;  //operation mode for the driver
-        public bool debug;                 //debug flag
+        public string port;                                         //port the module is connected to (COM#) or ttyACM#
+        public string ntripServer = "rtk2go.com";                    //caster server
+        public int ntripPort = 2101;                                 //caster port
+        public string ntripMountpoint;                               //caster mountpoint
+        public string ntripPassword;                                 //caster password
+        public float rtcmAccuracy = 3;                               //Minimum accuracy to be accepted before survey completes in meters (3.000F)/float
+        public int rtcmSurveyTime = 60;                              //minimum time required for the survey to complete
+        public OperationMode mode = OperationMode.Idle;              //operation mode for the driver
+        public bool debug = false;                                   //debug flag
     }
 
     class Program
@@ -60,7 +62,15 @@ namespace Zedf9p
                 //Create driver
                 _driver = new Driver(inputParams);
 
-                await _driver.Initialize(inputParams.mode);
+                try
+                {
+                    await _driver.Initialize(inputParams.mode);
+                }
+                catch (NtripException e) 
+                {
+                    //if driver fails to connect to NTRIP server put it into idle mode(only listed to incoming messages and spit out GPS data if available
+                    _driver.setMode(OperationMode.Idle);
+                }
 
                 await _driver.Run();
 
@@ -84,7 +94,7 @@ namespace Zedf9p
             }
             finally
             {
-                _driver.Cleanup();
+                await _driver.Cleanup();
             }
         }
 
@@ -98,8 +108,8 @@ namespace Zedf9p
                 switch (args[i].ToLower())
                 {
                     case "-debug": inputParams.debug = true; break;
-                    case "-server": inputParams.mode = Driver.OperationMode.Server; break;
-                    case "-client": inputParams.mode = Driver.OperationMode.Client; break;
+                    case "-server": inputParams.mode = OperationMode.Server; break;
+                    case "-client": inputParams.mode = OperationMode.Client; break;
                     case "-com-port": inputParams.port = args[++i]; break;
                     case "-ntrip-server": inputParams.ntripServer = args[++i]; break;
                     case "-ntrip-port": inputParams.ntripPort = int.Parse(args[++i]); break;
