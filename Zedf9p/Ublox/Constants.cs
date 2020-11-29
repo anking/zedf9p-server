@@ -229,6 +229,9 @@
         public const byte SVIN_MODE_ENABLE = 0x01;
         public const byte SVIN_MODE_FIXED = 0x02;               //Fixed mode(not survey), coordinates will need to be prodided
 
+        public const byte SVIN_MODE_FIXED_POSITION_LLA = 0x01;   //Fixed mode position type/ position is given in LAT/LON/ALT (default is ECEF)            
+        public const byte SVIN_MODE_FIXED_POSITION_ECEF = 0x00;
+
         //The following public consts are used to configure the various ports and streams for those ports. See -CFG-PRT.
         public const byte COM_PORT_I2C = 0;
         public const byte COM_PORT_UART1 = 1;

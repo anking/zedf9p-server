@@ -72,7 +72,11 @@ namespace Zedf9p
                     _driver.setMode(OperationMode.Idle);
                 }
 
-                await _driver.Run();
+
+                //run continually
+                while (true) { Thread.Sleep(5000); }
+
+                //await _driver.Run();
 
             }
             catch (UnauthorizedAccessException uae)

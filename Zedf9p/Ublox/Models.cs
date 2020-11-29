@@ -200,7 +200,7 @@ namespace UBLOX.Models
         /// Get receiver mode. 0-disabled, 1-survey-in, 2-fixed mode
         /// </summary>
         /// <returns></returns>
-        public Enums.ReceiverModeEnum getMode() => (Enums.ReceiverModeEnum)BitConverter.ToInt16(payload.Skip(2).Take(2).ToArray());
+        public Enums.ReceiverModeEnum getMode() => (Enums.ReceiverModeEnum)payload.Skip(2).Take(1).First();
 
         /// <summary>
         /// Get receiver accuracy in meters

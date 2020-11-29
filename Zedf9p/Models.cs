@@ -1,6 +1,8 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Zedf9p.Enums;
 using Zedf9p.Exceptions;
 
@@ -43,5 +45,10 @@ namespace Zedf9p.Models
                 return default(T);
             }
         }
+    }
+
+    class DriverRunThread {
+        public Task runTask;
+        public CancellationTokenSource tokenSource;
     }
 }

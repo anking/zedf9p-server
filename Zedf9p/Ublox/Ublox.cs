@@ -20,6 +20,8 @@ namespace UBLOX
         CommTypes commType = CommTypes.COMM_TYPE_SERIAL;
         SentenceTypes currentSentence = SentenceTypes.NONE;
 
+        private readonly object serialReadLock = new object();
+
         //sentence handlers
         Func<char, Task> _nmeaHandler = null;
         Func<byte, Task> _rtcmHandler = null;
@@ -387,12 +389,14 @@ namespace UBLOX
         //Called regularly to check for available bytes on the user' specified port
         public async Task<bool> checkUbloxInternal(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
         {
-            if (commType == CommTypes.COMM_TYPE_I2C)
+            lock (serialReadLock) {
+                if (commType == CommTypes.COMM_TYPE_I2C)
+                    return false;
+                //return checkUbloxI2C(incomingUBX, requestedClass, requestedID);
+                else if (commType == CommTypes.COMM_TYPE_SERIAL)
+                    return checkUbloxSerial(incomingUBX, requestedClass, requestedID).GetAwaiter().GetResult();
                 return false;
-            //return checkUbloxI2C(incomingUBX, requestedClass, requestedID);
-            else if (commType == CommTypes.COMM_TYPE_SERIAL)
-                return await checkUbloxSerial(incomingUBX, requestedClass, requestedID);
-            return false;
+            }
         }
 
         //Polls I2C for data, passing any new bytes to process()
@@ -1052,11 +1056,13 @@ namespace UBLOX
         //      extractLong etc should be updated so they receive a pointer to the packet buffer.
         public void processUBXpacket(ubxPacket msg)
         {
+
             switch (msg.cls)
             {
                 case Constants.UBX_CLASS_NAV:
                     if (msg.id == Constants.UBX_NAV_PVT && msg.len == 92)
                     {
+
                         //Parse various byte fields into global vars
                         int startingSpot = 0; //fixed value used in processUBX
 
@@ -1109,6 +1115,7 @@ namespace UBLOX
                     }
                     else if (msg.id == Constants.UBX_NAV_HPPOSLLH && msg.len == 36)
                     {
+
                         timeOfWeek = extractLong(4);
                         highResLongitude = (int)extractLong(8);
                         highResLatitude = (int)extractLong(12);
@@ -1134,44 +1141,6 @@ namespace UBLOX
                         highResModuleQueried.horizontalAccuracy = 1;
                         highResModuleQueried.verticalAccuracy = 1;
                         moduleQueried.gpsiTOW = 1; // this can arrive via HPPOS too.
-
-                        /*
-                              if (_printDebug == true)
-                              {
-                                _debugSerial.Write("Sec: "));
-                                _debugSerial.Write((((float)extractLong(4)) / 1000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("LON: "));
-                                _debugSerial.Write((((float)(int)extractLong(8)) / 10000000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("LAT: "));
-                                _debugSerial.Write((((float)(int)extractLong(12)) / 10000000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("ELI M: "));
-                                _debugSerial.Write((((float)(int)extractLong(16)) / 1000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("MSL M: "));
-                                _debugSerial.Write((((float)(int)extractLong(20)) / 1000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("LON HP: "));
-                                _debugSerial.Write((extractSignedChar(24));
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("LAT HP: "));
-                                _debugSerial.Write((extractSignedChar(25));
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("ELI HP: "));
-                                _debugSerial.Write((extractSignedChar(26));
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("MSL HP: "));
-                                _debugSerial.Write((extractSignedChar(27));
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("HA 2D M: "));
-                                _debugSerial.Write((((float)(int)extractLong(28)) / 10000.0f);
-                                _debugSerial.Write(" "));
-                                _debugSerial.Write("VERT M: "));
-                                _debugSerial.WriteLine(((float)(int)extractLong(32)) / 10000.0f);
-                              }
-                        */
                     }
                     break;
             }
@@ -1180,54 +1149,57 @@ namespace UBLOX
         //Given a packet and payload, send everything including CRC bytes via I2C port
         public async Task<SfeUbloxStatus> sendCommand(ubxPacket outgoingUBX, ushort maxWait = Constants.DefaultMaxWait)
         {
-            SfeUbloxStatus retVal = SfeUbloxStatus.SFE_UBLOX_STATUS_SUCCESS;
-
-            calcChecksum(outgoingUBX); //Sets checksum A and B bytes of the packet
-
-            if (_printDebug == true)
+            lock (serialReadLock)
             {
-                _debugSerial.Write("\nSending: ");
-                printPacket(outgoingUBX);
-            }
+                SfeUbloxStatus retVal = SfeUbloxStatus.SFE_UBLOX_STATUS_SUCCESS;
 
-            if (commType == CommTypes.COMM_TYPE_I2C)
-            {
-                //retVal = sendI2cCommand(outgoingUBX, maxWait);
-                //if (retVal != sfe_ublox_status_e.SFE_UBLOX_STATUS_SUCCESS)
-                //{
-                //    if (_printDebug == true)
-                //    {
-                //        _debugSerial.WriteLine("Send I2C Command failed");
-                //    }
-                //    return retVal;
-                //}
-            }
-            else if (commType == CommTypes.COMM_TYPE_SERIAL)
-            {
-                sendSerialCommand(outgoingUBX);
-            }
+                calcChecksum(outgoingUBX); //Sets checksum A and B bytes of the packet
 
-            if (maxWait > 0)
-            {
-                //Depending on what we just sent, either we need to look for an ACK or not
-                if (outgoingUBX.cls == Constants.UBX_CLASS_CFG)
+                if (_printDebug == true)
                 {
-                    if (_printDebug == true)
-                    {
-                        _debugSerial.WriteLine("sendCommand: Waiting for ACK response");
-                    }
-                    retVal = await waitForACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
+                    _debugSerial.Write("\nSending: ");
+                    printPacket(outgoingUBX);
                 }
-                else
+
+                if (commType == CommTypes.COMM_TYPE_I2C)
                 {
-                    if (_printDebug == true)
-                    {
-                        _debugSerial.WriteLine("sendCommand: Waiting for No ACK response");
-                    }
-                    retVal = await waitForNoACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
+                    //retVal = sendI2cCommand(outgoingUBX, maxWait);
+                    //if (retVal != sfe_ublox_status_e.SFE_UBLOX_STATUS_SUCCESS)
+                    //{
+                    //    if (_printDebug == true)
+                    //    {
+                    //        _debugSerial.WriteLine("Send I2C Command failed");
+                    //    }
+                    //    return retVal;
+                    //}
                 }
+                else if (commType == CommTypes.COMM_TYPE_SERIAL)
+                {
+                    sendSerialCommand(outgoingUBX);
+                }
+
+                if (maxWait > 0)
+                {
+                    //Depending on what we just sent, either we need to look for an ACK or not
+                    if (outgoingUBX.cls == Constants.UBX_CLASS_CFG)
+                    {
+                        if (_printDebug == true)
+                        {
+                            _debugSerial.WriteLine("sendCommand: Waiting for ACK response");
+                        }
+                        retVal = waitForACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait).GetAwaiter().GetResult(); //Wait for Ack response
+                    }
+                    else
+                    {
+                        if (_printDebug == true)
+                        {
+                            _debugSerial.WriteLine("sendCommand: Waiting for No ACK response");
+                        }
+                        retVal = waitForNoACKResponse(outgoingUBX, outgoingUBX.cls, outgoingUBX.id, maxWait).GetAwaiter().GetResult(); //Wait for Ack response
+                    }
+                }
+                return retVal;
             }
-            return retVal;
         }
 
         //Returns false if sensor fails to respond to I2C traffic
@@ -2237,7 +2209,7 @@ namespace UBLOX
         }
 
         //Get the current TimeMode3 settings - these contain survey in statuses
-        public async Task<SurveyMode> getSurveyMode(ushort maxWait = 250)
+        public async Task<SurveyMode> getTmode3(ushort maxWait = 250)
         {
             packetCfg.cls = Constants.UBX_CLASS_CFG;
             packetCfg.id = Constants.UBX_CFG_TMODE3;
@@ -2252,7 +2224,7 @@ namespace UBLOX
         //Control Survey-In for NEO-M8P
         public async Task<bool> setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250)
         {
-            if (await getSurveyMode(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
+            if (await getTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
 
             packetCfg.cls = Constants.UBX_CLASS_CFG;
@@ -2285,9 +2257,9 @@ namespace UBLOX
         }
         
         //Control Fixed Mode for ZED-F9p
-        public async Task<bool> setFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250)
+        public async Task<bool> enableFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250)
         {
-            if (await getSurveyMode(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
+            if (await getTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
 
             packetCfg.cls = Constants.UBX_CLASS_CFG;
@@ -2300,37 +2272,16 @@ namespace UBLOX
 
             //payloadCfg should be loaded with poll response. Now modify only the bits we care about
             payloadCfg[2] = Constants.SVIN_MODE_FIXED; //Set mode. Survey-In and Disabled are most common. Use ECEF (not LAT/LON/ALT).
+            payloadCfg[3] = Constants.SVIN_MODE_FIXED_POSITION_LLA; //Position is given in LAT/LON/ALT (default is ECEF)
 
             //set latitude
-            BitConverter.GetBytes(latitude).CopyTo(payloadCfg, 8);
-            payloadCfg[4] = (byte)(latitude & 0xFF);
-            payloadCfg[5] = (byte)(latitude >> 8);
-            payloadCfg[6] = (byte)(latitude >> 16);
-            payloadCfg[7] = (byte)(latitude >> 24);
+            BitConverter.GetBytes(latitude).CopyTo(payloadCfg, 4);
 
             //set longitude
-            //BitConverter.GetBytes(longitude).CopyTo(payloadCfg, 8);
-            //payloadCfg[4] = (byte)(latitude & 0xFF);
-            //payloadCfg[5] = (byte)(latitude >> 8);
-            //payloadCfg[6] = (byte)(latitude >> 16);
-            //payloadCfg[7] = (byte)(latitude >> 24);
+            BitConverter.GetBytes(longitude).CopyTo(payloadCfg, 8);
 
             //set altitude
             BitConverter.GetBytes(altitude).CopyTo(payloadCfg, 12);
-
-            //svinMinDur is U4 (uint) but we'll only use a ushort (waiting more than 65535 seconds seems excessive!)
-            //payloadCfg[24] = (byte)(observationTime & 0xFF); //svinMinDur in seconds
-            //payloadCfg[25] = (byte)(observationTime >> 8);   //svinMinDur in seconds
-            //payloadCfg[26] = 0;                      //Truncate to 16 bits
-            //payloadCfg[27] = 0;                      //Truncate to 16 bits
-
-            //svinAccLimit is U4 (uint) in 0.1mm.
-            //uint svinAccLimit = (uint)(requiredAccuracy * 10000.0); //Convert m to 0.1mm
-            //payloadCfg[28] = (byte)(svinAccLimit & 0xFF);                          //svinAccLimit in 0.1mm increments
-            //payloadCfg[29] = (byte)(svinAccLimit >> 8);
-            //payloadCfg[30] = (byte)(svinAccLimit >> 16);
-            //payloadCfg[31] = (byte)(svinAccLimit >> 24);
-            //BitConverter.GetBytes(svinAccLimit).CopyTo(payloadCfg, 28);
 
             return await sendCommand(packetCfg, maxWait) == SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
@@ -2345,6 +2296,12 @@ namespace UBLOX
         public async Task<bool> disableSurveyMode(ushort maxWait = 250)
         {
             return await setSurveyMode(Constants.SVIN_MODE_DISABLE, 0, 0, maxWait);
+        }
+
+        //alias for disableSurveyMode
+        public async Task<bool> disableReceiver(ushort maxWait = 250)
+        {
+            return await disableSurveyMode();
         }
 
         //Reads survey in status and sets the global variables
@@ -3271,10 +3228,10 @@ namespace UBLOX
 
         public async Task<int> getHighResLatitude(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.highResLatitude == 0)
-                await getHPPOSLLH(maxWait);
-            highResModuleQueried.highResLatitude = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            //if (highResModuleQueried.highResLatitude == 0)
+            //    await getHPPOSLLH(maxWait);
+            //highResModuleQueried.highResLatitude = 0; //Since we are about to give this to user, mark this data as stale
+            //highResModuleQueried.all = 0;
 
             return highResLatitude;
         }

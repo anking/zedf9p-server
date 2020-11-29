@@ -164,9 +164,9 @@ namespace UBLOX
 
         //Functions used for RTK and base station setup
         //It is probably safe to assume that users of the RTK will be using I2C / Qwiic. So let's leave maxWait set to 250ms.
-        Task<SurveyMode> getSurveyMode(ushort maxWait = 250);                                                                 //Get the current TimeMode3 settings
+        Task<SurveyMode> getTmode3(ushort maxWait = 250);                                                                 //Get the current TimeMode3 settings
         Task<bool> setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250); //Control survey in mode
-        Task<bool> setFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250);                   //Set fixed mode for GPS, will need lat, lng and altitude provided
+        Task<bool> enableFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250);                   //Set fixed mode for GPS, will need lat, lng and altitude provided
         Task<bool> enableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = 250);            //Begin Survey-In for NEO-M8P
         Task<bool> disableSurveyMode(ushort maxWait = 250);                                                             //Stop Survey-In mode
 
