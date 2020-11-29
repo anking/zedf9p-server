@@ -45,7 +45,9 @@ namespace Zedf9p.Core
         const int CLIENT_NAV_FREQUENCY = 20;                 //Sets how often GPS module will spit out data
         const int SERVER_NAV_FREQUENCY = 4;                 //Sets how often GPS module will spit out data
 
-        const bool NTRIP_SERVER_SIMULATION = true;
+        //TEST CONSTANTS
+        const bool NTRIP_SERVER_SIMULATION = false;         //if set to true the driver will not connect to NTRIP
+        const bool IGNORE_DISCONNECTED_SOCKET = false;          //true is a testvalue
 
         //parameters        
         bool _debug = false;     //debug flag
@@ -132,6 +134,8 @@ namespace Zedf9p.Core
         /// <returns></returns>
         async Task Run()
         {
+            Console.WriteLine("Starting 'Run' process as " + _driverOperationMode.ToString());
+
             //Running server operations
             if (_driverOperationMode == OperationMode.Server)
             {               
@@ -182,7 +186,7 @@ namespace Zedf9p.Core
             // Running client operations
             else if (_driverOperationMode == OperationMode.Client)
             {
-                Console.WriteLine("attaching nmea handler...");
+                //Console.WriteLine("attaching nmea handler...");
 
                 //ATTACH NMEA HANDLER
                 //_myGPS.attachNMEAHandler(processNmea_Client);        //this is not needed, GPS coords will be passed thru UBX        
@@ -194,8 +198,11 @@ namespace Zedf9p.Core
                 //configure for auto High-res messages
                 //await _myGPS.setAutoHPPOSLLH(true);  //not sure what this even does now
 
+                //await _myGPS.factoryReset();
+
                 //Set USB output to UBX only, no NMEA Noise
                 await _myGPS.setUSBOutput(UBLOX.Constants.COM_TYPE_UBX);
+                //await _myGPS.setUSBOutput(UBLOX.Constants.COM_TYPE_UBX | UBLOX.Constants.COM_TYPE_RTCM3);
 
                 //SEND RTCM to module when it becomes awailable
                 new Task(() =>
@@ -228,6 +235,8 @@ namespace Zedf9p.Core
 
                         Thread.Sleep(10);
                     }
+
+                    Console.WriteLine("Sockets needed for RTCM communication disconnected");
                 }).Start();
 
 
@@ -241,12 +250,13 @@ namespace Zedf9p.Core
                     int latitudeHp = await _myGPS.getHighResLatitudeHp();
                     //int longitude = await _myGPS.getHighResLongitude();
                     double longitude = await _myGPS.getHighResLongitude() / 10000000D;
-                    int longitudeHp = await _myGPS.getHighResLongitudeHp();
-                    int ellipsoid = await _myGPS.getElipsoid();
-                    int ellipsoidHp = await _myGPS.getElipsoidHp();
-                    int msl = await _myGPS.getMeanSeaLevel();
-                    int mslHp = await _myGPS.getMeanSeaLevelHp();
-                    uint accuracy = await _myGPS.getHorizontalAccuracy();
+                    //int longitudeHp = await _myGPS.getHighResLongitudeHp();
+                    //int ellipsoid = await _myGPS.getElipsoid();
+                    //int ellipsoidHp = await _myGPS.getElipsoidHp();
+                    //int msl = await _myGPS.getMeanSeaLevel();
+                    //int mslHp = await _myGPS.getMeanSeaLevelHp();
+                    uint accuracy = await _myGPS.getPositionAccuracy();
+                    int altitude = await _myGPS.getAltitude() / 1000;
 
                     double heading = await _myGPS.getHeading() / 100000D;
 
@@ -283,10 +293,11 @@ namespace Zedf9p.Core
 
                     _syncDataSocket.SendLine("LATITUDE:" + latitude);
                     _syncDataSocket.SendLine("LONGITUDE:" + longitude);
+                    _syncDataSocket.SendLine("ALTITUDE:" + altitude);
                     _syncDataSocket.SendLine("ACCURACY:" + accuracy);
                     _syncDataSocket.SendLine("HEADING:" + heading);
 
-                    Thread.Sleep(1100/CLIENT_NAV_FREQUENCY);
+                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
                 }
             }
         }
@@ -388,7 +399,6 @@ namespace Zedf9p.Core
             //setup for debugging(needs to be a different serial port)
             //_myGPS.enableDebugging(_serialPort, true);
 
-
             //Try reconnectin to NTRIP Caster 10 times every 10 seconds if connection fails 
             Utils.RetryHelper<NtripException>(() =>
             {
@@ -413,7 +423,7 @@ namespace Zedf9p.Core
                 var rcvLen = _ntripCasterSocket.Receive(_ntripInBuffer);
                 var ntripResponseMessage = Encoding.ASCII.GetString(_ntripInBuffer, 0, rcvLen);
 
-                if (ntripResponseMessage.Equals("ICY 200 OK\r\n"))
+                if (ntripResponseMessage.Contains("ICY 200 OK\r\n"))
                 {
                     Console.WriteLine("Authentication passed!");
                 }
@@ -431,6 +441,8 @@ namespace Zedf9p.Core
                 }
 
             }, 10, new TimeSpan(0, 0, 10), ()=>Console.WriteLine("trying to reconnect in 10 seconds..."));
+
+            await Run();
 
         }
 
@@ -571,7 +583,13 @@ namespace Zedf9p.Core
         /// <param name="incoming">Incoming byte</param>
         /// <returns></returns>
         async Task processRtcm_Server(byte incoming)
-        {           
+        {
+
+            //send rtcm info thru socket to the UI http server app
+            if (_rtcmDataSocket.isConnected())
+            {
+                _rtcmDataSocket.Send(incoming);
+            }
 
             //push RTCM bute into the receive buffer until it reaches maximum defined size
             _ntripOutBuffer[_rtcmFrame++] = incoming;
@@ -598,7 +616,7 @@ namespace Zedf9p.Core
 
                     //Do not send this more than once a second to sync
                     if (Utils.millis() > _nextNtripStatusSendTime) {
-                        _syncDataSocket.SendLine("NTRIP_SENT");
+                        _syncDataSocket.SendLine("NTRIP_SENT:");
                         _nextNtripStatusSendTime = Utils.millis() + 1000;
                     }
 
@@ -653,6 +671,7 @@ namespace Zedf9p.Core
             } 
             else
             {
+                if(!IGNORE_DISCONNECTED_SOCKET)
                 throw new SyncSocketException("Sync Socket Disconnected, cannot continue, driver must shutdown...");
             }
         }
@@ -765,7 +784,7 @@ namespace Zedf9p.Core
                 moduleResponse = await _myGPS.getSurveyStatus(2000);
                 double latitude = await _myGPS.getHighResLatitude() / 10000000D;
                 double longitude = await _myGPS.getHighResLongitude() / 10000000D;
-                int altitude = await _myGPS.getAltitude();
+                int altitude = await _myGPS.getAltitude() / 1000;
 
                 //if module response if always true
                 if (moduleResponse)
@@ -773,7 +792,7 @@ namespace Zedf9p.Core
                     //send data back to UI
                     _syncDataSocket.SendLine("LATITUDE:" + latitude);
                     _syncDataSocket.SendLine("LONGITUDE:" + longitude);
-                    _syncDataSocket.SendLine("ALTITUDE:" + altitude/1000); //altitude in meters
+                    _syncDataSocket.SendLine("ALTITUDE:" + altitude); //altitude in meters
                     _syncDataSocket.SendLine("SURVEY_TIME:" + _myGPS.svin.observationTime.ToString());
                     _syncDataSocket.SendLine("ACCURACY:" + _myGPS.svin.meanAccuracy.ToString());
                     _syncDataSocket.SendLine("SURVEY_VALID:" + _myGPS.svin.valid.ToString());

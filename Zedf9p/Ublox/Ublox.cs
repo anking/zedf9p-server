@@ -3228,10 +3228,10 @@ namespace UBLOX
 
         public async Task<int> getHighResLatitude(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            //if (highResModuleQueried.highResLatitude == 0)
-            //    await getHPPOSLLH(maxWait);
-            //highResModuleQueried.highResLatitude = 0; //Since we are about to give this to user, mark this data as stale
-            //highResModuleQueried.all = 0;
+            if (highResModuleQueried.highResLatitude == 0)
+                await getHPPOSLLH(maxWait);
+            highResModuleQueried.highResLatitude = 0; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = 0;
 
             return highResLatitude;
         }
@@ -3412,7 +3412,7 @@ namespace UBLOX
                 tempAccuracy += 5; //Round fraction of mm up to next mm if .5 or above
             tempAccuracy /= 10;  //Convert 0.1mm units to mm
 
-            return (tempAccuracy);
+            return tempAccuracy;
         }
 
         //Get the current latitude in degrees
@@ -3437,7 +3437,11 @@ namespace UBLOX
             return longitude;
         }
 
-        //Get the current altitude in mm according to ellipsoid model
+        /// <summary>
+        /// Get the current altitude in mm according to ellipsoid model
+        /// </summary>
+        /// <param name="maxWait"></param>
+        /// <returns></returns>
         public async Task<int> getAltitude(ushort maxWait = Constants.getPVTmaxWait)
         {
             if (moduleQueried.altitude == 0)
@@ -3448,9 +3452,11 @@ namespace UBLOX
             return altitude;
         }
 
-        //Get the current altitude in mm according to mean sea level
-        //Ellipsoid model: https://www.esri.com/news/arcuser/0703/geoid1of3.html
-        //Difference between Ellipsoid Model and Mean Sea Level: https://eos-gnss.com/elevation-for-beginners/
+        /// <summary>
+        /// Get the current altitude in mm according to mean sea level
+        /// Ellipsoid model: https://www.esri.com/news/arcuser/0703/geoid1of3.html
+        /// Difference between Ellipsoid Model and Mean Sea Level: https://eos-gnss.com/elevation-for-beginners/
+        /// </summary>
         public async Task<int> getAltitudeMSL(ushort maxWait = Constants.getPVTmaxWait)
         {
             if (moduleQueried.altitudeMSL == 0)
