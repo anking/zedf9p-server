@@ -142,46 +142,46 @@ namespace UBLOX.Models
 
     class moduleQueried
     {
-        public uint gpsiTOW = 1;
-        public uint gpsYear = 1;
-        public uint gpsMonth = 1;
-        public uint gpsDay = 1;
-        public uint gpsHour = 1;
-        public uint gpsMinute = 1;
-        public uint gpsSecond = 1;
-        public uint gpsDateValid = 1;
-        public uint gpsTimeValid = 1;
-        public uint gpsNanosecond = 1;
+        public bool gpsiTow;
+        public bool gpsYear;
+        public bool gpsMonth;
+        public bool gpsDay;
+        public bool gpsHour;
+        public bool gpsMinute;
+        public bool gpsSecond;
+        public bool gpsDateValid;
+        public bool gpsTimeValid;
+        public bool gpsNanosecond;
 
-        public uint all = 1;
-        public uint longitude = 1;
-        public uint latitude = 1;
-        public uint altitude = 1;
-        public uint altitudeMSL = 1;
-        public uint SIV = 1;
-        public uint fixType = 1;
-        public uint carrierSolution = 1;
-        public uint groundSpeed = 1;
-        public uint headingOfMotion = 1;
-        public uint pDOP = 1;
-        public uint versionNumber = 1;
+        public bool all;
+        public bool longitude;
+        public bool latitude;
+        public bool altitude;
+        public bool altitudeMsl;
+        public bool siv;
+        public bool fixType;
+        public bool carrierSolution;
+        public bool groundSpeed;
+        public bool headingOfMotion;
+        public bool pDop;
+        public bool versionNumber;
     };
 
     class highResModuleQueried
     {
-        public ushort all = 1;
-        public ushort timeOfWeek = 1;
-        public ushort highResLatitude = 1;
-        public ushort highResLongitude = 1;
-        public ushort elipsoid = 1;
-        public ushort meanSeaLevel = 1;
-        public ushort geoidSeparation = 1; // Redundant but kept for backward-compatibility
-        public ushort horizontalAccuracy = 1;
-        public ushort verticalAccuracy = 1;
-        public ushort elipsoidHp = 1;
-        public ushort meanSeaLevelHp = 1;
-        public ushort highResLatitudeHp = 1;
-        public ushort highResLongitudeHp = 1;
+        public bool all;
+        public bool timeOfWeek;
+        public bool highResLatitude;
+        public bool highResLongitude;
+        public bool elipsoid;
+        public bool meanSeaLevel;
+        public bool geoidSeparation; // Redundant but kept for backward-compatibility
+        public bool horizontalAccuracy;
+        public bool verticalAccuracy;
+        public bool elipsoidHp;
+        public bool meanSeaLevelHp;
+        public bool highResLatitudeHp;
+        public bool highResLongitudeHp;
     };
 
 
@@ -191,7 +191,7 @@ namespace UBLOX.Models
 
     public class UbloxDataPacket
     {
-        public byte[] payload { get; set; }
+        public byte[] Payload { get; set; }
     }
 
     public class SurveyMode : UbloxDataPacket
@@ -200,12 +200,23 @@ namespace UBLOX.Models
         /// Get receiver mode. 0-disabled, 1-survey-in, 2-fixed mode
         /// </summary>
         /// <returns></returns>
-        public Enums.ReceiverModeEnum getMode() => (Enums.ReceiverModeEnum)payload.Skip(2).Take(1).First();
+        public Enums.ReceiverModeEnum GetMode() => (Enums.ReceiverModeEnum)Payload.Skip(2).Take(1).First();
 
         /// <summary>
         /// Get receiver accuracy in meters
         /// </summary>
         /// <returns></returns>
-        public float getAccuracyLimit() => BitConverter.ToInt32(payload.Skip(28).Take(4).ToArray()) / 10000F; //Accuracy contained in 0.1mm in a module, convert to meters
+        public float GetAccuracyLimit() => BitConverter.ToInt32(Payload.Skip(28).Take(4).ToArray()) / 10000F; //Accuracy contained in 0.1mm in a module, convert to meters
+
+        /// <summary>
+        /// Get receiver position mode 1 is Lat/Lon/Alt, 0 (default) is ECEF
+        /// </summary>
+        /// <returns></returns>
+        public bool GetPositionMode() => Payload.Skip(3).Take(1).First() > 0;
+
+        public double GetLatitude()
+        {
+            return BitConverter.ToInt32(Payload.Skip(4).Take(4).ToArray());
+        }
     }
 }

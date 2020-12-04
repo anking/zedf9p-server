@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading;
@@ -47,8 +48,52 @@ namespace Zedf9p.Models
         }
     }
 
-    class DriverRunThread {
-        public Task runTask;
-        public CancellationTokenSource tokenSource;
+    class ErrorFlags
+    {
+        public List<string> Errors { get; set; }
+        Action<ErrorFlags> _sendHandler;
+
+        public ErrorFlags(Action<ErrorFlags> sendHandler)
+        {
+            Errors = new List<string>();
+            _sendHandler = sendHandler;
+        }
+
+        public ErrorFlags Add(string errorFlag)
+        {
+            if (!Errors.Contains(errorFlag))
+            {
+                Errors.Add(errorFlag);
+                Send(); //send updates immediately
+            }
+
+            return this;
+        }
+
+        public ErrorFlags Remove(string errorFlag)
+        {
+            if (Errors.Contains(errorFlag))
+            {
+                Errors.Remove(errorFlag);
+                Send(); //send updates immediately
+            }
+
+            return this;
+        }
+
+        public ErrorFlags ClearErrors()
+        {
+            Errors = new List<string>();
+            Send(); //send updates immediately
+
+            return this;
+        }
+
+        private ErrorFlags Send()
+        {
+            _sendHandler?.Invoke(this);
+
+            return this;
+        }
     }
 }

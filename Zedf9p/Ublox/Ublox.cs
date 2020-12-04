@@ -124,7 +124,7 @@ namespace UBLOX
         {
             // Constructor
             currentGeofenceParams.numFences = 0; // Zero the number of geofences currently in use
-            moduleQueried.versionNumber = 0;
+            //moduleQueried.versionNumber;
 
             //if (checksumFailurePin >= 0)
             //{
@@ -1090,28 +1090,28 @@ namespace UBLOX
                         pDOP = extractInt((byte)(76 - startingSpot));
 
                         //Mark all datums as fresh (not read before)
-                        moduleQueried.gpsiTOW = 1;
-                        moduleQueried.gpsYear = 1;
-                        moduleQueried.gpsMonth = 1;
-                        moduleQueried.gpsDay = 1;
-                        moduleQueried.gpsHour = 1;
-                        moduleQueried.gpsMinute = 1;
-                        moduleQueried.gpsSecond = 1;
-                        moduleQueried.gpsDateValid = 1;
-                        moduleQueried.gpsTimeValid = 1;
-                        moduleQueried.gpsNanosecond = 1;
+                        moduleQueried.gpsiTow = true;
+                        moduleQueried.gpsYear = true;
+                        moduleQueried.gpsMonth = true;
+                        moduleQueried.gpsDay = true;
+                        moduleQueried.gpsHour = true;
+                        moduleQueried.gpsMinute = true;
+                        moduleQueried.gpsSecond = true;
+                        moduleQueried.gpsDateValid = true;
+                        moduleQueried.gpsTimeValid = true;
+                        moduleQueried.gpsNanosecond = true;
 
-                        moduleQueried.all = 1;
-                        moduleQueried.longitude = 1;
-                        moduleQueried.latitude = 1;
-                        moduleQueried.altitude = 1;
-                        moduleQueried.altitudeMSL = 1;
-                        moduleQueried.SIV = 1;
-                        moduleQueried.fixType = 1;
-                        moduleQueried.carrierSolution = 1;
-                        moduleQueried.groundSpeed = 1;
-                        moduleQueried.headingOfMotion = 1;
-                        moduleQueried.pDOP = 1;
+                        moduleQueried.all = true;
+                        moduleQueried.longitude = true;
+                        moduleQueried.latitude = true;
+                        moduleQueried.altitude = true;
+                        moduleQueried.altitudeMsl = true;
+                        moduleQueried.siv = true;
+                        moduleQueried.fixType = true;
+                        moduleQueried.carrierSolution = true;
+                        moduleQueried.groundSpeed = true;
+                        moduleQueried.headingOfMotion = true;
+                        moduleQueried.pDop = true;
                     }
                     else if (msg.id == Constants.UBX_NAV_HPPOSLLH && msg.len == 36)
                     {
@@ -1128,19 +1128,19 @@ namespace UBLOX
                         horizontalAccuracy = extractLong(28);
                         verticalAccuracy = extractLong(32);
 
-                        highResModuleQueried.all = 1;
-                        highResModuleQueried.highResLatitude = 1;
-                        highResModuleQueried.highResLatitudeHp = 1;
-                        highResModuleQueried.highResLongitude = 1;
-                        highResModuleQueried.highResLongitudeHp = 1;
-                        highResModuleQueried.elipsoid = 1;
-                        highResModuleQueried.elipsoidHp = 1;
-                        highResModuleQueried.meanSeaLevel = 1;
-                        highResModuleQueried.meanSeaLevelHp = 1;
-                        highResModuleQueried.geoidSeparation = 1;
-                        highResModuleQueried.horizontalAccuracy = 1;
-                        highResModuleQueried.verticalAccuracy = 1;
-                        moduleQueried.gpsiTOW = 1; // this can arrive via HPPOS too.
+                        highResModuleQueried.all = true;
+                        highResModuleQueried.highResLatitude = true;
+                        highResModuleQueried.highResLatitudeHp = true;
+                        highResModuleQueried.highResLongitude = true;
+                        highResModuleQueried.highResLongitudeHp = true;
+                        highResModuleQueried.elipsoid = true;
+                        highResModuleQueried.elipsoidHp = true;
+                        highResModuleQueried.meanSeaLevel = true;
+                        highResModuleQueried.meanSeaLevelHp = true;
+                        highResModuleQueried.geoidSeparation = true;
+                        highResModuleQueried.horizontalAccuracy = true;
+                        highResModuleQueried.verticalAccuracy = true;
+                        moduleQueried.gpsiTow = true; // this can arrive via HPPOS too.
                     }
                     break;
             }
@@ -2217,7 +2217,7 @@ namespace UBLOX
             packetCfg.startingSpot = 0;
 
             return await sendCommand(packetCfg, maxWait) == SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_RECEIVED // We are expecting data and an ACK
-            ? new SurveyMode() { payload = payloadCfg.Take(40).ToArray() }//length of date in this packet is 40 bytes
+            ? new SurveyMode() { Payload = payloadCfg.Take(40).ToArray() }//length of date in this packet is 40 bytes
             : null;
         }
 
@@ -2512,7 +2512,7 @@ namespace UBLOX
                 autoPVT = enable;
                 autoPVTImplicitUpdate = implicitUpdate;
             }
-            moduleQueried.all = 0;
+            moduleQueried.all = false;
             return ok;
         }
 
@@ -2554,7 +2554,7 @@ namespace UBLOX
                 autoHPPOSLLH = enable;
                 autoHPPOSLLHImplicitUpdate = implicitUpdate;
             }
-            highResModuleQueried.all = 0;
+            highResModuleQueried.all = false;
             return ok;
         }
 
@@ -3072,90 +3072,90 @@ namespace UBLOX
         //Get the current year
         public async Task<ushort> getYear(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsYear == 0)
+            if (!moduleQueried.gpsYear)
                 await getPVT(maxWait);
-            moduleQueried.gpsYear = 0; //Since we are about to give this to user, mark this data as stale
-            return (gpsYear);
+            moduleQueried.gpsYear = false; //Since we are about to give this to user, mark this data as stale
+            return gpsYear;
         }
 
         //Get the current month
         public async Task<byte> getMonth(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsMonth == 0)
+            if (!moduleQueried.gpsMonth)
                 await getPVT(maxWait);
-            moduleQueried.gpsMonth = 0; //Since we are about to give this to user, mark this data as stale
-            return (gpsMonth);
+            moduleQueried.gpsMonth = false; //Since we are about to give this to user, mark this data as stale
+            return gpsMonth;
         }
 
         //Get the current day
         public async Task<byte> getDay(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsDay == 0)
+            if (!moduleQueried.gpsDay)
                 await getPVT(maxWait);
-            moduleQueried.gpsDay = 0; //Since we are about to give this to user, mark this data as stale
-            return (gpsDay);
+            moduleQueried.gpsDay = false; //Since we are about to give this to user, mark this data as stale
+            return gpsDay;
         }
 
         //Get the current hour
         public async Task<byte> getHour(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsHour == 0)
+            if (!moduleQueried.gpsHour)
                 await getPVT(maxWait);
-            moduleQueried.gpsHour = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsHour = false; //Since we are about to give this to user, mark this data as stale
             return gpsHour;
         }
 
         //Get the current minute
         public async Task<byte> getMinute(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsMinute == 0)
+            if (!moduleQueried.gpsMinute)
                 await getPVT(maxWait);
-            moduleQueried.gpsMinute = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsMinute = false; //Since we are about to give this to user, mark this data as stale
             return gpsMinute;
         }
 
         //Get the current second
         public async Task<byte> getSecond(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsSecond == 0)
+            if (!moduleQueried.gpsSecond)
                 await getPVT(maxWait);
-            moduleQueried.gpsSecond = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsSecond = false; //Since we are about to give this to user, mark this data as stale
             return gpsSecond;
         }
 
         //Get the current date validity
         public async Task<bool> getDateValid(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsDateValid == 0)
+            if (!moduleQueried.gpsDateValid)
                 await getPVT(maxWait);
-            moduleQueried.gpsDateValid = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsDateValid = false; //Since we are about to give this to user, mark this data as stale
             return gpsDateValid;
         }
 
         //Get the current time validity
         public async Task<bool> getTimeValid(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsTimeValid == 0)
+            if (!moduleQueried.gpsTimeValid)
                 await getPVT(maxWait);
-            moduleQueried.gpsTimeValid = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsTimeValid = false; //Since we are about to give this to user, mark this data as stale
             return gpsTimeValid;
         }
 
         //Get the current millisecond
         public async Task<ushort> getMillisecond(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsiTOW == 0)
+            if (!moduleQueried.gpsiTow)
                 await getPVT(maxWait);
-            moduleQueried.gpsiTOW = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsiTow = false; //Since we are about to give this to user, mark this data as stale
             return gpsMillisecond;
         }
 
         //Get the current nanoseconds - includes milliseconds
         public async Task<int> getNanosecond(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsNanosecond == 0)
+            if (!moduleQueried.gpsNanosecond)
                 await getPVT(maxWait);
-            moduleQueried.gpsNanosecond = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsNanosecond = false; //Since we are about to give this to user, mark this data as stale
             return gpsNanosecond;
         }
 
@@ -3170,7 +3170,7 @@ namespace UBLOX
                     _debugSerial.WriteLine("getPVT: Autoreporting");
                 }
                 await checkUbloxInternal(packetCfg, Constants.UBX_CLASS_NAV, Constants.UBX_NAV_PVT);
-                return moduleQueried.all > 0;
+                return moduleQueried.all;
             }
             else if (autoPVT && !autoPVTImplicitUpdate)
             {
@@ -3220,88 +3220,88 @@ namespace UBLOX
 
         public async Task<uint> getTimeOfWeek(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.gpsiTOW == 0)
+            if (!moduleQueried.gpsiTow)
                 await getPVT(maxWait);
-            moduleQueried.gpsiTOW = 0; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.gpsiTow = false; //Since we are about to give this to user, mark this data as stale
             return timeOfWeek;
         }
 
         public async Task<int> getHighResLatitude(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.highResLatitude == 0)
+            if (!highResModuleQueried.highResLatitude)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.highResLatitude = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.highResLatitude = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return highResLatitude;
         }
 
         public async Task<byte> getHighResLatitudeHp(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.highResLatitudeHp == 0)
+            if (!highResModuleQueried.highResLatitudeHp)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.highResLatitudeHp = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.highResLatitudeHp = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return highResLatitudeHp;
         }
 
         public async Task<int> getHighResLongitude(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.highResLongitude == 0)
+            if (!highResModuleQueried.highResLongitude)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.highResLongitude = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.highResLongitude = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return highResLongitude;
         }
 
         public async Task<byte> getHighResLongitudeHp(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.highResLongitudeHp == 0)
+            if (!highResModuleQueried.highResLongitudeHp)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.highResLongitudeHp = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.highResLongitudeHp = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (highResLongitudeHp);
         }
 
         public async Task<int> getElipsoid(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.elipsoid == 0)
+            if (!highResModuleQueried.elipsoid)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.elipsoid = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.elipsoid = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (elipsoid);
         }
 
         public async Task<byte> getElipsoidHp(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.elipsoidHp == 0)
+            if (!highResModuleQueried.elipsoidHp)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.elipsoidHp = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.elipsoidHp = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (elipsoidHp);
         }
 
         public async Task<int> getMeanSeaLevel(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.meanSeaLevel == 0)
+            if (!highResModuleQueried.meanSeaLevel)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.meanSeaLevel = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.meanSeaLevel = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (meanSeaLevel);
         }
 
         public async Task<byte> getMeanSeaLevelHp(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.meanSeaLevelHp == 0)
+            if (!highResModuleQueried.meanSeaLevelHp)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.meanSeaLevelHp = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.meanSeaLevelHp = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (meanSeaLevelHp);
         }
@@ -3309,30 +3309,30 @@ namespace UBLOX
         // getGeoidSeparation is currently redundant. The geoid separation seems to only be provided in NMEA GGA and GNS messages.
         public async Task<int> getGeoidSeparation(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.geoidSeparation == 0)
+            if (!highResModuleQueried.geoidSeparation)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.geoidSeparation = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.geoidSeparation = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (geoidSeparation);
         }
 
         public async Task<uint> getHorizontalAccuracy(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.horizontalAccuracy == 0)
+            if (!highResModuleQueried.horizontalAccuracy)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.horizontalAccuracy = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.horizontalAccuracy = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (horizontalAccuracy);
         }
 
         public async Task<uint> getVerticalAccuracy(ushort maxWait = Constants.getHPPOSLLHmaxWait)
         {
-            if (highResModuleQueried.verticalAccuracy == 0)
+            if (!highResModuleQueried.verticalAccuracy)
                 await getHPPOSLLH(maxWait);
-            highResModuleQueried.verticalAccuracy = 0; //Since we are about to give this to user, mark this data as stale
-            highResModuleQueried.all = 0;
+            highResModuleQueried.verticalAccuracy = false; //Since we are about to give this to user, mark this data as stale
+            highResModuleQueried.all = false;
 
             return (verticalAccuracy);
         }
@@ -3347,7 +3347,7 @@ namespace UBLOX
                     _debugSerial.WriteLine("getHPPOSLLH: Autoreporting");
                 }
                 await checkUbloxInternal(packetCfg, Constants.UBX_CLASS_NAV, Constants.UBX_NAV_HPPOSLLH);
-                return highResModuleQueried.all > 0 ? true : false;
+                return highResModuleQueried.all;
             }
             else if (autoHPPOSLLH && !autoHPPOSLLHImplicitUpdate)
             {
@@ -3419,9 +3419,9 @@ namespace UBLOX
         //Returns a long representing the number of degrees *10^-7
         public async Task<int> getLatitude(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.latitude == 0) await getPVT(maxWait);
-            moduleQueried.latitude = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            if (!moduleQueried.latitude) await getPVT(maxWait);
+            moduleQueried.latitude = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return latitude;
         }
@@ -3430,9 +3430,9 @@ namespace UBLOX
         //Returns a long representing the number of degrees *10^-7
         public async Task<int> getLongitude(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.longitude == 0) await getPVT(maxWait);
-            moduleQueried.longitude = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            if (!moduleQueried.longitude) await getPVT(maxWait);
+            moduleQueried.longitude = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return longitude;
         }
@@ -3444,10 +3444,10 @@ namespace UBLOX
         /// <returns></returns>
         public async Task<int> getAltitude(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.altitude == 0)
+            if (!moduleQueried.altitude)
                 await getPVT(maxWait);
-            moduleQueried.altitude = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.altitude = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return altitude;
         }
@@ -3459,10 +3459,10 @@ namespace UBLOX
         /// </summary>
         public async Task<int> getAltitudeMSL(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.altitudeMSL == 0)
+            if (!moduleQueried.altitudeMsl)
                 await getPVT(maxWait);
-            moduleQueried.altitudeMSL = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.altitudeMsl = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return altitudeMSL;
         }
@@ -3470,10 +3470,10 @@ namespace UBLOX
         //Get the number of satellites used in fix
         public async Task<byte> getSIV(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.SIV == 0)
+            if (!moduleQueried.siv)
                 await getPVT(maxWait);
-            moduleQueried.SIV = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.siv = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return SIV;
         }
@@ -3482,12 +3482,12 @@ namespace UBLOX
         //0=no fix, 1=dead reckoning, 2=2D, 3=3D, 4=GNSS, 5=Time fix
         public async Task<byte> getFixType(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.fixType == 0)
+            if (!moduleQueried.fixType)
             {
                 await getPVT(maxWait);
             }
-            moduleQueried.fixType = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.fixType = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return (fixType);
         }
@@ -3497,10 +3497,10 @@ namespace UBLOX
         //0=No solution, 1=Float solution, 2=Fixed solution
         public async Task<byte> getCarrierSolutionType(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.carrierSolution == 0)
+            if (!moduleQueried.carrierSolution)
                 await getPVT(maxWait);
-            moduleQueried.carrierSolution = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.carrierSolution = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return (carrierSolution);
         }
@@ -3508,10 +3508,10 @@ namespace UBLOX
         //Get the ground speed in mm/s
         public async Task<int> getGroundSpeed(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.groundSpeed == 0)
+            if (!moduleQueried.groundSpeed)
                 await getPVT(maxWait);
-            moduleQueried.groundSpeed = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.groundSpeed = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
             return groundSpeed;
         }
@@ -3519,30 +3519,30 @@ namespace UBLOX
         //Get the heading of motion (as opposed to heading of car) in degrees * 10^-5
         public async Task<int> getHeading(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.headingOfMotion == 0)
+            if (!moduleQueried.headingOfMotion)
                 await getPVT(maxWait);
-            moduleQueried.headingOfMotion = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.headingOfMotion = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
-            return (headingOfMotion);
+            return headingOfMotion;
         }
 
         //Get the positional dillution of precision * 10^-2 (dimensionless)
         public async Task<ushort> getPDOP(ushort maxWait = Constants.getPVTmaxWait)
         {
-            if (moduleQueried.pDOP == 0)
+            if (!moduleQueried.pDop)
                 await getPVT(maxWait);
-            moduleQueried.pDOP = 0; //Since we are about to give this to user, mark this data as stale
-            moduleQueried.all = 0;
+            moduleQueried.pDop = false; //Since we are about to give this to user, mark this data as stale
+            moduleQueried.all = false;
 
-            return (pDOP);
+            return pDOP;
         }
 
         //Get the current protocol version of the u-blox module we're communicating with
         //This is helpful when deciding if we should call the high-precision Lat/Long (HPPOSLLH) or the regular (POSLLH)
         public async Task<byte> getProtocolVersionHigh(ushort maxWait = 500)
         {
-            if (moduleQueried.versionNumber == 0)
+            if (!moduleQueried.versionNumber)
                 await getProtocolVersion(maxWait);
             return versionHigh;
         }
@@ -3551,7 +3551,7 @@ namespace UBLOX
         //This is helpful when deciding if we should call the high-precision Lat/Long (HPPOSLLH) or the regular (POSLLH)
         public async Task<byte> getProtocolVersionLow(ushort maxWait = 500)
         {
-            if (moduleQueried.versionNumber == 0)
+            if (!moduleQueried.versionNumber)
                 await getProtocolVersion(maxWait);
             return versionLow;
         }
@@ -3592,7 +3592,7 @@ namespace UBLOX
                 {
                     versionHigh = (byte)((payloadCfg[(30 * extensionNumber) + 8] - '0') * 10 + (payloadCfg[(30 * extensionNumber) + 9] - '0'));  //Convert '18' to 18
                     versionLow = (byte)((payloadCfg[(30 * extensionNumber) + 11] - '0') * 10 + (payloadCfg[(30 * extensionNumber) + 12] - '0')); //Convert '00' to 00
-                    moduleQueried.versionNumber = 1;                                                                                  //Mark this data as new
+                    moduleQueried.versionNumber = true;                                                                                  //Mark this data as new
 
                     if (_printDebug == true)
                     {
@@ -3612,46 +3612,46 @@ namespace UBLOX
         public void flushPVT()
         {
             //Mark all datums as stale (read before)
-            moduleQueried.gpsiTOW = 0;
-            moduleQueried.gpsYear = 0;
-            moduleQueried.gpsMonth = 0;
-            moduleQueried.gpsDay = 0;
-            moduleQueried.gpsHour = 0;
-            moduleQueried.gpsMinute = 0;
-            moduleQueried.gpsSecond = 0;
-            moduleQueried.gpsDateValid = 0;
-            moduleQueried.gpsTimeValid = 0;
-            moduleQueried.gpsNanosecond = 0;
+            moduleQueried.gpsiTow = false;
+            moduleQueried.gpsYear = false;
+            moduleQueried.gpsMonth = false;
+            moduleQueried.gpsDay = false;
+            moduleQueried.gpsHour = false;
+            moduleQueried.gpsMinute = false;
+            moduleQueried.gpsSecond = false;
+            moduleQueried.gpsDateValid = false;
+            moduleQueried.gpsTimeValid = false;
+            moduleQueried.gpsNanosecond = false;
 
-            moduleQueried.all = 0;
-            moduleQueried.longitude = 0;
-            moduleQueried.latitude = 0;
-            moduleQueried.altitude = 0;
-            moduleQueried.altitudeMSL = 0;
-            moduleQueried.SIV = 0;
-            moduleQueried.fixType = 0;
-            moduleQueried.carrierSolution = 0;
-            moduleQueried.groundSpeed = 0;
-            moduleQueried.headingOfMotion = 0;
-            moduleQueried.pDOP = 0;
+            moduleQueried.all = false;
+            moduleQueried.longitude = false;
+            moduleQueried.latitude = false;
+            moduleQueried.altitude = false;
+            moduleQueried.altitudeMsl = false;
+            moduleQueried.siv = false;
+            moduleQueried.fixType = false;
+            moduleQueried.carrierSolution = false;
+            moduleQueried.groundSpeed = false;
+            moduleQueried.headingOfMotion = false;
+            moduleQueried.pDop = false;
         }
 
         //Mark all the HPPOSLLH data as read/stale. This is handy to get data alignment after CRC failure
         public void flushHPPOSLLH()
         {
             //Mark all datums as stale (read before)
-            highResModuleQueried.all = 0;
-            highResModuleQueried.highResLatitude = 0;
-            highResModuleQueried.highResLatitudeHp = 0;
-            highResModuleQueried.highResLongitude = 0;
-            highResModuleQueried.highResLongitudeHp = 0;
-            highResModuleQueried.elipsoid = 0;
-            highResModuleQueried.elipsoidHp = 0;
-            highResModuleQueried.meanSeaLevel = 0;
-            highResModuleQueried.meanSeaLevelHp = 0;
-            highResModuleQueried.geoidSeparation = 0;
-            highResModuleQueried.horizontalAccuracy = 0;
-            highResModuleQueried.verticalAccuracy = 0;
+            highResModuleQueried.all = false;
+            highResModuleQueried.highResLatitude = false;
+            highResModuleQueried.highResLatitudeHp = false;
+            highResModuleQueried.highResLongitude = false;
+            highResModuleQueried.highResLongitudeHp = false;
+            highResModuleQueried.elipsoid = false;
+            highResModuleQueried.elipsoidHp = false;
+            highResModuleQueried.meanSeaLevel = false;
+            highResModuleQueried.meanSeaLevelHp = false;
+            highResModuleQueried.geoidSeparation = false;
+            highResModuleQueried.horizontalAccuracy = false;
+            highResModuleQueried.verticalAccuracy = false;
             //moduleQueried.gpsiTOW = false; // this can arrive via HPPOS too.
         }
 
