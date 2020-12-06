@@ -20,11 +20,8 @@ To launch this on pi run the following
  */
 
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using UBLOX;
-using Zedf9p.Communication;
 using Zedf9p.Core;
 using Zedf9p.Exceptions;
 using Zedf9p.Enums;
@@ -42,7 +39,7 @@ namespace Zedf9p
         public float rtcmAccuracy = 3;                               //Minimum accuracy to be accepted before survey completes in meters (3.000F)/float
         public int rtcmSurveyTime = 60;                              //minimum time required for the survey to complete
         public OperationMode mode = OperationMode.Idle;              //operation mode for the driver
-        public bool debug = false;                                   //debug flag
+        public bool debug;                                   //debug flag
     }
 
     class Program
@@ -69,7 +66,9 @@ namespace Zedf9p
                 catch (NtripException e) 
                 {
                     //if driver fails to connect to NTRIP server put it into idle mode(only listed to incoming messages and spit out GPS data if available
-                    _driver.setMode(OperationMode.Idle);
+                    _driver.SetMode(OperationMode.Idle);
+
+                    Console.WriteLine(e.Message);
                 }
 
 

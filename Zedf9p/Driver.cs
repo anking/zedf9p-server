@@ -22,6 +22,7 @@ To launch this on pi run the following
 using System;
 using System.IO;
 using System.IO.Ports;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -98,8 +99,8 @@ namespace Zedf9p.Core
 
         //Current operation mode
         OperationMode _driverOperationMode;
-        public void setMode(OperationMode mode) => _driverOperationMode = mode;
-        public OperationMode getMode() => _driverOperationMode;
+        public void SetMode(OperationMode mode) => _driverOperationMode = mode;
+        public OperationMode GetMode() => _driverOperationMode;
 
         //Current receiver mode (in server configuration)
         ReceiverMode _receiverMode = ReceiverMode.SurveyIn;
@@ -212,7 +213,7 @@ namespace Zedf9p.Core
                 //SEND RTCM to module when it becomes available
                 new Task(() =>
                 {
-                    var lastRTCMdataReceived = Utils.millis();
+                    var lastRtcmDataReceived = Utils.millis();
 
                     while (_ntripCasterSocket != null && _syncDataSocket != null && _ntripCasterSocket.Connected && _syncDataSocket.isConnected())
                     {
@@ -226,14 +227,14 @@ namespace Zedf9p.Core
 
                                 _myGps.send(_ntripInBuffer, ntripRcvLen);
 
-                                lastRTCMdataReceived = Utils.millis();
+                                lastRtcmDataReceived = Utils.millis();
                             }
 
                             _errorFlags.Remove("NTRIP_DATA_RCV_TIMEOUT");
                         }
 
                         //if no RTCM data received for longer than 10 minutes send error to UI
-                        if (Utils.millis() > lastRTCMdataReceived + NTRIP_RECEIVE_TIMEOUT * 1000)
+                        if (Utils.millis() > lastRtcmDataReceived + NTRIP_RECEIVE_TIMEOUT * 1000)
                         {
                             _errorFlags.Add("NTRIP_DATA_RCV_TIMEOUT");
                         }
@@ -248,32 +249,50 @@ namespace Zedf9p.Core
                 //Output nav data to console every nav cycle
                 while (_syncDataSocket != null && _syncDataSocket.isConnected())
                 {
-
-                    //GET HIGH RESOLUTION DATA
-                    double latitude = await _myGps.getHighResLatitude() / 10000000D;
-                    int latitudeHp = await _myGps.getHighResLatitudeHp();
-                    double longitude = await _myGps.getHighResLongitude() / 10000000D;
-                    uint accuracy = await _myGps.getPositionAccuracy();
-                    int altitude = await _myGps.getAltitude() / 1000;
-
-                    double heading = await _myGps.getHeading() / 100000D;
-
-
-                    _syncDataSocket.SendLine("LATITUDE:" + latitude);
-                    _syncDataSocket.SendLine("LONGITUDE:" + longitude);
-                    _syncDataSocket.SendLine("ALTITUDE:" + altitude);
-                    _syncDataSocket.SendLine("ACCURACY:" + accuracy);
-                    _syncDataSocket.SendLine("HEADING:" + heading);
+                    await SendPositionData(new []{"lat", "lon", "alt", "acc", "head"});
 
                     Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
                 }
 
                 Console.WriteLine("Driver Exited...");
+            } 
+            else if (_driverOperationMode == OperationMode.Idle)
+            {
+
+                //Output nav data to console every nav cycle
+                while (_syncDataSocket != null && _syncDataSocket.isConnected())
+                {
+                    await SendPositionData(new[] { "lat", "lon", "alt", "acc", "head" });
+
+                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
+                }
             }
         }
 
         /// <summary>
-        /// Send error flags to UI
+        /// Quesries module for most recent position information and sends all necessary data to UI
+        /// <param name="dataPoints">All data point that needed to be outputed (lat, lon, alt, acc, head)</param>
+        /// </summary>
+        public async Task SendPositionData(string[] dataPoints)
+        {
+            //GET HIGH RESOLUTION DATA
+            double latitude = dataPoints.Contains("lat") ? await _myGps.getHighResLatitude() / 10000000D : 0;
+            //int latitudeHp = await _myGps.getHighResLatitudeHp();
+            double longitude = dataPoints.Contains("lon") ? await _myGps.getHighResLongitude() / 10000000D : 0;
+            int altitude = dataPoints.Contains("alt") ? await _myGps.getAltitude() / 1000 : 0;
+            uint accuracy = dataPoints.Contains("acc") ? await _myGps.getPositionAccuracy() : 0;
+            double heading = dataPoints.Contains("head") ? await _myGps.getHeading() / 100000D : 0;
+
+
+            if (dataPoints.Contains("lat")) _syncDataSocket.SendLine("LATITUDE:" + latitude);
+            if (dataPoints.Contains("lon")) _syncDataSocket.SendLine("LONGITUDE:" + longitude);
+            if (dataPoints.Contains("alt")) _syncDataSocket.SendLine("ALTITUDE:" + altitude);
+            if (dataPoints.Contains("acc")) _syncDataSocket.SendLine("ACCURACY:" + accuracy);
+            if (dataPoints.Contains("head")) _syncDataSocket.SendLine("HEADING:" + heading);
+        }
+
+        /// <summary>
+        /// Send error flags to UI, this error handler is being called by the "ErrorFlags" class then new error comes up
         /// </summary>
         void SendErrors(ErrorFlags errorFlags)
         {
@@ -285,7 +304,7 @@ namespace Zedf9p.Core
         /// Destructof of class, basically disconnects all sockets
         /// </summary>
         /// <returns></returns>
-        async public Task Cleanup()
+        public async Task Cleanup()
         {
             // in the end, disconnect and close the socket to cleanup
             _rtcmDataSocket?.Disconnect();
@@ -301,23 +320,23 @@ namespace Zedf9p.Core
         /// </summary>
         /// <param name="mode">Mode of operation</param>
         /// <returns></returns>
-        async public Task Initialize(OperationMode mode)
+        public async Task Initialize(OperationMode mode)
         {
             //set current mode
             _driverOperationMode = mode;
 
             //start interprocess communication
-            connectDataSockets();
+            ConnectDataSockets();
             
             if (_driverOperationMode == OperationMode.Server)
             {
                 //start NTRIP server (base station)
-                _mainRunningThread = Task.Run(configureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
             }
             else if(_driverOperationMode == OperationMode.Client)
             {
                 //start NTRIP client (rover)
-                _mainRunningThread = Task.Run(configureGpsAsNtripClient, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripClient, _cancellationTokenSource.Token);
             }
 
             await maintainRunningThreads();
@@ -328,14 +347,14 @@ namespace Zedf9p.Core
             while (true)
             {
                 //Check sync socket periodically
-                await checkSyncDataSocket();
+                await CheckSyncDataSocket();
 
                 Thread.Sleep(100);
             }
         }
 
         //connect to f9p socket for interprocess communication
-        void connectDataSockets()
+        void ConnectDataSockets()
         {
             try
             {
@@ -359,7 +378,7 @@ namespace Zedf9p.Core
         /// Configure f9p module as ntrip client (will consume data from NTRIP server and adjust coordinates)
         /// </summary>
         /// <returns></returns>
-        async Task configureGpsAsNtripClient()
+        async Task ConfigureGpsAsNtripClient()
         {
             //open serial port
             _serialPort = new SerialPort(_portName, 115200, Parity.None, 8, StopBits.One);
@@ -381,6 +400,9 @@ namespace Zedf9p.Core
             //Try reconnecting to NTRIP Caster 10 times every 10 seconds if connection fails 
             Utils.RetryHelper<NtripException>(() =>
             {
+                //Update position data in UI during these retries
+                SendPositionData(new [] { "lat", "lon", "alt", "acc", "head" }).GetAwaiter().GetResult();
+
                 //start sending data to ntrip caster
                 ConnectNtripCasterSocket().GetAwaiter().GetResult();
 
@@ -429,7 +451,7 @@ namespace Zedf9p.Core
         /// Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
         /// </summary>
         /// <returns></returns>
-        async Task configureGpsAsNtripServer()
+        async Task ConfigureGpsAsNtripServer()
         {
 
             Console.WriteLine("Create serial port connection for f9p module...");
@@ -454,8 +476,8 @@ namespace Zedf9p.Core
             //engage proper receiver mode
             switch (_receiverMode)
             {
-                case ReceiverMode.SurveyIn: await startSurvey(_surveyTime, _surveyAccuracy); break;
-                case ReceiverMode.Fixed: await startFixed(_latitude, _longitude, _altitude); break;
+                case ReceiverMode.SurveyIn: await StartSurvey(_surveyTime, _surveyAccuracy); break;
+                case ReceiverMode.Fixed: await StartFixed(_latitude, _longitude, _altitude); break;
             }           
 
             //connect to to ntrip caster
@@ -611,7 +633,7 @@ namespace Zedf9p.Core
         /// Check incoming data thru the sync socket for commands coming from the frontend
         /// </summary>
         /// <returns></returns>
-        async Task checkSyncDataSocket()
+        async Task CheckSyncDataSocket()
         {
             //check if socket is connected
             if (_syncDataSocket.isConnected())
@@ -632,7 +654,7 @@ namespace Zedf9p.Core
                         {
                             var command = new SyncIncomingCommand(syncMessage);
 
-                            await processSyncCommand(command);
+                            await ProcessSyncCommand(command);
                         }
                         catch (UnknownSyncCommandException e)
                         {
@@ -653,7 +675,7 @@ namespace Zedf9p.Core
             }
         }
 
-        async Task processSyncCommand(SyncIncomingCommand command) {
+        async Task ProcessSyncCommand(SyncIncomingCommand command) {
 
             if (SyncIncomingCommandType.RESTART_SURVEY == command.Type)
             {
@@ -677,15 +699,15 @@ namespace Zedf9p.Core
                 _cancellationTokenSource = new CancellationTokenSource();
 
                 //enable receiver with new settings
-                _mainRunningThread = Task.Run(configureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
 
             }
             else if (SyncIncomingCommandType.RESTART_FIXED == command.Type)
             {
 
                 //Receive new accuracy from UI
-                _latitude = command.getValue<int>();
-                _longitude = command.getValue<int>(1);
+                _latitude = int.Parse(command.getValue<string>().Replace(".", ""));
+                _longitude = int.Parse(command.getValue<string>(1).Replace(".",""));
                 _altitude = command.getValue<int>(2);
 
                 //Disable receiver survey mode bewfore re-enabling with new settings
@@ -704,7 +726,7 @@ namespace Zedf9p.Core
                 _cancellationTokenSource = new CancellationTokenSource();
 
                 //enable receiver with new settings
-                _mainRunningThread = Task.Run(configureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
 
             }
         }
@@ -715,7 +737,7 @@ namespace Zedf9p.Core
         /// <param name="rtcmSurveyTime"></param>
         /// <param name="rtcmAccuracy"></param>
         /// <returns></returns>
-        async Task startSurvey(int rtcmSurveyTime, float rtcmAccuracy) {
+        async Task StartSurvey(int rtcmSurveyTime, float rtcmAccuracy) {
 
             if (_surveyAccuracy == 0 || _surveyTime == 0) throw new InvalidDataException("Survey accuracy or minimum time not provided, cannot continue...");
 
@@ -761,21 +783,16 @@ namespace Zedf9p.Core
                 if (_cancellationTokenSource.Token.IsCancellationRequested) return;
 
                 //check sync data socket for updates
-                await checkSyncDataSocket();
+                await CheckSyncDataSocket();
 
                 //Query module for SVIN status with 2000ms timeout (req can take a long time)
                 moduleResponse = await _myGps.getSurveyStatus(2000);
-                double latitude = await _myGps.getHighResLatitude() / 10000000D;
-                double longitude = await _myGps.getHighResLongitude() / 10000000D;
-                int altitude = await _myGps.getAltitude() / 1000;
 
                 //if module response if always true
                 if (moduleResponse)
                 {
                     //send data back to UI
-                    _syncDataSocket.SendLine("LATITUDE:" + latitude);
-                    _syncDataSocket.SendLine("LONGITUDE:" + longitude);
-                    _syncDataSocket.SendLine("ALTITUDE:" + altitude); //altitude in meters
+                    await SendPositionData(new [] { "lat", "lon", "alt" }); //add regular data
                     _syncDataSocket.SendLine("ACCURACY:" + _myGps.svin.meanAccuracy.ToString());
                     _syncDataSocket.SendLine("SURVEY_TIME:" + _myGps.svin.observationTime.ToString());
                     _syncDataSocket.SendLine("SURVEY_VALID:" + _myGps.svin.valid.ToString());
@@ -798,21 +815,13 @@ namespace Zedf9p.Core
             }
 
             //Send location data again in case survey has started as valid already
-            {
-                //send data back to UI
-                double latitude = await _myGps.getHighResLatitude() / 10000000D;
-                double longitude = await _myGps.getHighResLongitude() / 10000000D;
-                int altitude = await _myGps.getAltitude() / 1000;
-                uint accuracy = await _myGps.getPositionAccuracy() / 1000;
-                _syncDataSocket.SendLine("LATITUDE:" + latitude);
-                _syncDataSocket.SendLine("LONGITUDE:" + longitude);
-                _syncDataSocket.SendLine("ALTITUDE:" + altitude); //altitude in meters
-                _syncDataSocket.SendLine("ACCURACY:" + accuracy);
+            { 
+                await SendPositionData(new [] { "lat", "lon", "alt", "acc" });
 
-                Console.WriteLine("Lat: " + latitude);
-                Console.WriteLine("Lon: " + longitude);
-                Console.WriteLine("Alt: " + altitude);
-                Console.WriteLine("Accuracy: " + accuracy);
+                //Console.WriteLine("Lat: " + latitude);
+                //Console.WriteLine("Lon: " + longitude);
+                //Console.WriteLine("Alt: " + altitude);
+                //Console.WriteLine("Accuracy: " + accuracy);
             }
 
             Console.WriteLine("Base survey complete! RTCM can now be broadcast");
@@ -828,12 +837,11 @@ namespace Zedf9p.Core
         /// <param name="longitude"></param>
         /// <param name="altitude"></param>
         /// <returns></returns>
-        async Task startFixed(int latitude, int longitude, int altitude) {
+        async Task StartFixed(int latitude, int longitude, int altitude) {
 
             if (latitude == 0 || longitude == 0 || altitude == 0) throw new InvalidDataException("Latitude, longitude or altitude not provided, cannot continue...");
 
             await disableRtcmMessagesOnUSB();
-            //_myGPS.attachRTCMHandler(null);
 
             Console.WriteLine("Enable Fixed Mode, Lat: " + latitude + " Lon: " + longitude + " Alt: " + altitude);
 
@@ -848,14 +856,15 @@ namespace Zedf9p.Core
             //_syncDataSocket.SendLine("LONGITUDE:" + await _myGPS.getHighResLongitude() / 10000000D);
             //_syncDataSocket.SendLine("ALTITUDE:" + await _myGPS.getAltitude() / 1000);
 
-            _syncDataSocket.SendLine("LATITUDE:" + latitude / 10000000D);
-            _syncDataSocket.SendLine("LONGITUDE:" + longitude / 10000000D);
-            _syncDataSocket.SendLine("ALTITUDE:" + altitude / 1000);
+            //_syncDataSocket.SendLine("LATITUDE:" + latitude / 10000000D);
+            //_syncDataSocket.SendLine("LONGITUDE:" + longitude / 10000000D);
+            //_syncDataSocket.SendLine("ALTITUDE:" + altitude / 1000);
+
+            await SendPositionData(new [] { "lat", "lon", "alt", "acc" });
 
             Console.WriteLine("Base setting complete! RTCM can now be broadcast");
 
             await enableRtcmMessagesOnUSB();
-            //_myGPS.attachRTCMHandler(processRtcm_Server);
         }
 
         async Task enableRtcmMessagesOnUSB()
