@@ -5,12 +5,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Zedf9p
+namespace Zedf9p.Utils
 {
-    public static class Utils
+    public static class Threading
     {
-        public static long millis() => DateTimeOffset.Now.ToUnixTimeMilliseconds();
-
         /// <summary>
         /// Retries action multiple times after which throws an exception
         /// </summary>

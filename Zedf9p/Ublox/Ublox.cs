@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using UBLOX.Models;
 using UBLOX.Enums;
+using Zedf9p.Utils;
+using Serilog;
 
 namespace UBLOX
 {
@@ -19,6 +21,7 @@ namespace UBLOX
         vehicleAttitude vehAtt = new vehicleAttitude();
         CommTypes commType = CommTypes.COMM_TYPE_SERIAL;
         SentenceTypes currentSentence = SentenceTypes.NONE;
+        ILogger _logger;
 
         private readonly object serialReadLock = new object();
 
@@ -27,15 +30,12 @@ namespace UBLOX
         Func<byte, Task> _rtcmHandler = null;
 
         //Variables
-        //TwoWire* _i2cPort;              //The generic connection to user's chosen I2C hardware
         SerialPort _serialPort;            //The generic connection to user's chosen Serial hardware
         SerialPort _nmeaOutputPort; //The user can assign an output port to print NMEA sentences if they wish
         SerialPort _debugSerial;            //The stream to send debug messages to if enabled
 
-        byte _gpsI2Caddress = 0x42; //Default 7-bit unshifted address of the ublox 6/7/8/M8/F9 series
-                                       //This can be changed using the ublox configuration software
-
         bool _printDebug = false;        //Flag to print the serial commands we are sending to the Serial port for debug
+        bool _printLoggerDebug = false;        // Print to colsole
         bool _printLimitedDebug = false; //Flag to print limited debug messages. Useful for I2C debugging or high navigation rates
 
         //The packet buffers
@@ -124,58 +124,10 @@ namespace UBLOX
         {
             // Constructor
             currentGeofenceParams.numFences = 0; // Zero the number of geofences currently in use
-            //moduleQueried.versionNumber;
-
-            //if (checksumFailurePin >= 0)
-            //{
-            //    pinMode((byte)checksumFailurePin, OUTPUT);
-            //    digitalWrite((byte)checksumFailurePin, HIGH);
-            //}
-
-            //Define the size of the I2C buffer based on the platform the user has
-            //In general we found that most platforms use 32 bytes as the I2C buffer size. We could
-            //implement platform gaurds here but as you can see, none currently benefit from >32
-            //so we'll leave it up to the user to set it using setI2CTransactionSize if they will benefit from it
-            // //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-            // #if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
-
-            // i2cTransactionSize = 32;
-
-            // #elif defined(__SAMD21G18A__)
-
-            // i2cTransactionSize = 32;
-
-            //#elif __MK20DX256__
-            //Teensy
-
-            // #elif defined(ARDUINO_ARCH_ESP32)
-
-            // i2cTransactionSize = 32; //The ESP32 has an I2C buffer length of 128. We reduce it to 32 bytes to increase stability with the module
-
-            // #endif
         }
 
-        //Initialize the i2c port
-        //bool begin(TwoWire &wirePort, byte deviceAddress)
-        //{
-        //    commType = COMM_TYPE_I2C;
-        //    _i2cPort = &wirePort; //Grab which port the user wants us to use
-
-        //    //We expect caller to begin their I2C port, with the speed of their choice external to the library
-        //    //But if they forget, we start the hardware here.
-
-        //    //We're moving away from the practice of starting Wire hardware in a library. This is to avoid cross platform issues.
-        //    //ie, there are some platforms that don't handle multiple starts to the wire hardware. Also, every time you start the wire
-        //    //hardware the clock speed reverts back to 100kHz regardless of previous Wire.setClocks().
-        //    //_i2cPort.begin();
-
-        //    _gpsI2Caddress = deviceAddress; //Store the I2C address from user
-
-        //    return (isConnected());
-        //}
-
         //Initialize the Serial port
-        public async Task<bool> begin(SerialPort serialPort)
+        public async Task<bool> BeginAsync(SerialPort serialPort)
         {
             commType = CommTypes.COMM_TYPE_SERIAL;
 
@@ -187,25 +139,12 @@ namespace UBLOX
             // Create a new SerialPort object with default settings.
             _serialPort = serialPort;
 
-            return await isConnected();
+            return await IsConnected();
         }
-
-        //Sets the global size for I2C transactions
-        //Most platforms use 32 bytes (the default) but this allows users to increase the transaction
-        //size if the platform supports it
-        //Note: If the transaction size is set larger than the platforms buffer size, bad things will happen.
-        //void setI2CTransactionSize(byte transactionSize)
-        //{
-        //    i2cTransactionSize = transactionSize;
-        //}
-        //byte getI2CTransactionSize(void)
-        //{
-        //    return (i2cTransactionSize);
-        //}
 
         //Enable or disable the printing of sent/response HEX values.
         //Use this in conjunction with 'Transport Logging' from the Universal Reader Assistant to see what they're doing that we're not
-        public void enableDebugging(SerialPort debugPort, bool printLimitedDebug)
+        public void EnableDebugging(SerialPort debugPort, bool printLimitedDebug)
         {
             _debugSerial = debugPort; //Grab which port the user wants us to use for debugging
             if (printLimitedDebug == false)
@@ -217,26 +156,46 @@ namespace UBLOX
                 _printLimitedDebug = true; //Should we print limited debug messages? Good for debugging high navigation rates
             }
         }
-        public void disableDebugging()
+
+        public void EnableDebugLogging(ILogger logger)
         {
-            _printDebug = false; //Turn off extra print statements
+            _logger = logger;
+            _printLoggerDebug = true;
+        }
+
+        public void DisableDebugging()
+        {
+            // Turn off extra print statements
+            _printDebug = false;
+            _printLoggerDebug = false;
             _printLimitedDebug = false;
         }
 
         //Safely print messages
-        public void debugPrint(string message)
+        public void DebugPrint(string message)
         {
             if (_printDebug == true)
             {
                 _debugSerial.Write(message);
             }
+
+            if (_printLoggerDebug == true)
+            {
+                _logger.Debug(message);
+            }
         }
+
         //Safely print messages
-        public void debugPrintln(string message)
+        public void DebugPrintln(string message)
         {
             if (_printDebug == true)
             {
                 _debugSerial.WriteLine(message);
+            }
+
+            if (_printLoggerDebug == true)
+            {
+                _logger.Debug(message);
             }
         }
 
@@ -350,30 +309,6 @@ namespace UBLOX
             }
         }
 
-        //Changes the I2C address that the u-blox module responds to
-        //0x42 is the default but can be changed with this command
-        public async Task<bool> setI2CAddress(byte deviceAddress, ushort maxWait)
-        {
-            //Get the current config values for the I2C port
-            await getPortSettings(Constants.COM_PORT_I2C, maxWait); //This will load the payloadCfg array with current port settings
-
-            packetCfg.cls = Constants.UBX_CLASS_CFG;
-            packetCfg.id = Constants.UBX_CFG_PRT;
-            packetCfg.len = 20;
-            packetCfg.startingSpot = 0;
-
-            //payloadCfg is now loaded with current bytes. Change only the ones we need to
-            payloadCfg[4] = (byte)(deviceAddress << 1); //DDC mode LSB
-
-            if (await sendCommand(packetCfg, maxWait) == SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_SENT) // We are only expecting an ACK
-            {
-                //Success! Now change our internal global.
-                _gpsI2Caddress = deviceAddress; //Store the I2C address from user
-                return true;
-            }
-            return false;
-        }
-
         //Want to see the NMEA messages on the Serial port? Here's how
         public void setNMEAOutputPort(SerialPort nmeaOutputPort)
         {
@@ -381,7 +316,7 @@ namespace UBLOX
         }
 
         //Called regularly to check for available bytes on the user' specified port
-        public async Task<bool> checkUblox(byte requestedClass = Constants.UBX_CLASS_NAV, byte requestedID = Constants.UBX_NAV_PVT)
+        public async Task<bool> CheckUblox(byte requestedClass = Constants.UBX_CLASS_NAV, byte requestedID = Constants.UBX_NAV_PVT)
         {
             return await checkUbloxInternal(packetCfg, requestedClass, requestedID);
         }
@@ -398,160 +333,6 @@ namespace UBLOX
                 return false;
             }
         }
-
-        //Polls I2C for data, passing any new bytes to process()
-        //Returns true if new bytes are available
-        //bool checkUbloxI2C(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
-        //{
-        //    if (millis() - lastCheck >= i2cPollingWait)
-        //    {
-        //        //Get the number of bytes available from the module
-        //        ushort bytesAvailable = 0;
-        //        _i2cPort.beginTransmission(_gpsI2Caddress);
-        //        _i2cPort.write(0xFD);                     //0xFD (MSB) and 0xFE (LSB) are the registers that contain number of bytes available
-        //        if (_i2cPort.endTransmission(false) != 0) //Send a restart command. Do not release bus.
-        //            return false;                          //Sensor did not ACK
-
-        //        _i2cPort.requestFrom((byte)_gpsI2Caddress, (byte)2);
-        //        if (_i2cPort.available())
-        //        {
-        //            byte msb = _i2cPort.read();
-        //            byte lsb = _i2cPort.read();
-        //            if (lsb == 0xFF)
-        //            {
-        //                //I believe this is a u-blox bug. Device should never present an 0xFF.
-        //                if ((_printDebug == true) || (_printLimitedDebug == true)) // Print this if doing limited debugging
-        //                {
-        //                    _debugSerial.WriteLine"checkUbloxI2C: u-blox bug, length lsb is 0xFF"));
-        //                }
-        //                if (checksumFailurePin >= 0)
-        //                {
-        //                    digitalWrite((byte)checksumFailurePin, LOW);
-        //                    delay(10);
-        //                    digitalWrite((byte)checksumFailurePin, HIGH);
-        //                }
-        //                lastCheck = millis(); //Put off checking to avoid I2C bus traffic
-        //                return false;
-        //            }
-        //            bytesAvailable = (ushort)msb << 8 | lsb;
-        //        }
-
-        //        if (bytesAvailable == 0)
-        //        {
-        //            if (_printDebug == true)
-        //            {
-        //                _debugSerial.WriteLine"checkUbloxI2C: OK, zero bytes available"));
-        //            }
-        //            lastCheck = millis(); //Put off checking to avoid I2C bus traffic
-        //            return false;
-        //        }
-
-        //        //Check for undocumented bit error. We found this doing logic scans.
-        //        //This error is rare but if we incorrectly interpret the first bit of the two 'data available' bytes as 1
-        //        //then we have far too many bytes to check. May be related to I2C setup time violations: https://github.com/sparkfun/SparkFun_Ublox_Arduino_Library/issues/40
-        //        if (bytesAvailable & ((ushort)1 << 15))
-        //        {
-        //            //Clear the MSbit
-        //            bytesAvailable &= ~((ushort)1 << 15);
-
-        //            if ((_printDebug == true) || (_printLimitedDebug == true)) // Print this if doing limited debugging
-        //            {
-        //                _debugSerial.Write("checkUbloxI2C: Bytes available error:"));
-        //                _debugSerial.WriteLine(bytesAvailable);
-        //                if (checksumFailurePin >= 0)
-        //                {
-        //                    digitalWrite((byte)checksumFailurePin, LOW);
-        //                    delay(10);
-        //                    digitalWrite((byte)checksumFailurePin, HIGH);
-        //                }
-        //            }
-        //        }
-
-        //        if (bytesAvailable > 100)
-        //        {
-        //            if (_printDebug == true)
-        //            {
-        //                _debugSerial.Write("checkUbloxI2C: Large packet of "));
-        //                _debugSerial.Write((bytesAvailable);
-        //                _debugSerial.WriteLine" bytes received"));
-        //            }
-        //        }
-        //        else
-        //        {
-        //            if (_printDebug == true)
-        //            {
-        //                _debugSerial.Write("checkUbloxI2C: Reading "));
-        //                _debugSerial.Write((bytesAvailable);
-        //                _debugSerial.WriteLine" bytes"));
-        //            }
-        //        }
-
-        //        while (bytesAvailable)
-        //        {
-        //            _i2cPort.beginTransmission(_gpsI2Caddress);
-        //            _i2cPort.write(0xFF);                     //0xFF is the register to read data from
-        //            if (_i2cPort.endTransmission(false) != 0) //Send a restart command. Do not release bus.
-        //                return false;                          //Sensor did not ACK
-
-        //            //Limit to 32 bytes or whatever the buffer limit is for given platform
-        //            ushort bytesToRead = bytesAvailable;
-        //            if (bytesToRead > i2cTransactionSize)
-        //                bytesToRead = i2cTransactionSize;
-
-        //            TRY_AGAIN:
-
-        //            _i2cPort.requestFrom((byte)_gpsI2Caddress, (byte)bytesToRead);
-        //            if (_i2cPort.available())
-        //            {
-        //                for (ushort x = 0; x < bytesToRead; x++)
-        //                {
-        //                    byte incoming = _i2cPort.read(); //Grab the actual character
-
-        //                    //Check to see if the first read is 0x7F. If it is, the module is not ready
-        //                    //to respond. Stop, wait, and try again
-        //                    if (x == 0)
-        //                    {
-        //                        if (incoming == 0x7F)
-        //                        {
-        //                            if ((_printDebug == true) || (_printLimitedDebug == true)) // Print this if doing limited debugging
-        //                            {
-        //                                _debugSerial.WriteLine"checkUbloxU2C: u-blox error, module not ready with data"));
-        //                            }
-        //                            delay(5); //In logic analyzation, the module starting responding after 1.48ms
-        //                            if (checksumFailurePin >= 0)
-        //                            {
-        //                                digitalWrite((byte)checksumFailurePin, LOW);
-        //                                delay(10);
-        //                                digitalWrite((byte)checksumFailurePin, HIGH);
-        //                            }
-        //                            goto TRY_AGAIN;
-        //                        }
-        //                    }
-
-        //                    process(incoming, incomingUBX, requestedClass, requestedID); //Process this valid character
-        //                }
-        //            }
-        //            else
-        //                return false; //Sensor did not respond
-
-        //            bytesAvailable -= bytesToRead;
-        //        }
-        //    }
-
-        //    return true;
-
-        //} //end checkUbloxI2C()
-
-        //Checks Serial for data, passing any new bytes to process()
-        //public bool checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
-        //{
-        //    while (_serialPort.IsOpen)
-        //    {
-        //        process(_serialPort.ReadByte(), incomingUBX, requestedClass, requestedID);
-        //    }
-        //    return true;
-
-        //} //end checkUbloxSerial()
 
         //Checks Serial for data, passing any new bytes to process()
         public async Task<bool> checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
@@ -1202,66 +983,6 @@ namespace UBLOX
             }
         }
 
-        //Returns false if sensor fails to respond to I2C traffic
-        //sfe_ublox_status_e sendI2cCommand(ubxPacket outgoingUBX, ushort maxWait)
-        //{
-        //    //Point at 0xFF data register
-        //    _i2cPort.beginTransmission((byte)_gpsI2Caddress); //There is no register to write to, we just begin writing data bytes
-        //    _i2cPort.write(0xFF);
-        //    if (_i2cPort.endTransmission() != 0)         //Don't release bus
-        //        return (SFE_UBLOX_STATUS_I2C_COMM_FAILURE); //Sensor did not ACK
-
-        //    //Write header bytes
-        //    _i2cPort.beginTransmission((byte)_gpsI2Caddress); //There is no register to write to, we just begin writing data bytes
-        //    _i2cPort.write(UBX_SYNCH_1);                         //μ - oh ublox, you're funny. I will call you micro-blox from now on.
-        //    _i2cPort.write(UBX_SYNCH_2);                         //b
-        //    _i2cPort.write(outgoingUBX.cls);
-        //    _i2cPort.write(outgoingUBX.id);
-        //    _i2cPort.write(outgoingUBX.len & 0xFF);     //LSB
-        //    _i2cPort.write(outgoingUBX.len >> 8);       //MSB
-        //    if (_i2cPort.endTransmission(false) != 0)    //Do not release bus
-        //        return (SFE_UBLOX_STATUS_I2C_COMM_FAILURE); //Sensor did not ACK
-
-        //    //Write payload. Limit the sends into 32 byte chunks
-        //    //This code based on ublox: https://forum.u-blox.com/index.php/20528/how-to-use-i2c-to-get-the-nmea-frames
-        //    ushort bytesToSend = outgoingUBX.len;
-
-        //    //"The number of data bytes must be at least 2 to properly distinguish
-        //    //from the write access to set the address counter in random read accesses."
-        //    ushort startSpot = 0;
-        //    while (bytesToSend > 1)
-        //    {
-        //        byte len = bytesToSend;
-        //        if (len > i2cTransactionSize)
-        //            len = i2cTransactionSize;
-
-        //        _i2cPort.beginTransmission((byte)_gpsI2Caddress);
-        //        //_i2cPort.write(outgoingUBX.payload, len); //Write a portion of the payload to the bus
-
-        //        for (ushort x = 0; x < len; x++)
-        //            _i2cPort.write(outgoingUBX.payload[startSpot + x]); //Write a portion of the payload to the bus
-
-        //        if (_i2cPort.endTransmission(false) != 0)    //Don't release bus
-        //            return (SFE_UBLOX_STATUS_I2C_COMM_FAILURE); //Sensor did not ACK
-
-        //        //*outgoingUBX.payload += len; //Move the pointer forward
-        //        startSpot += len; //Move the pointer forward
-        //        bytesToSend -= len;
-        //    }
-
-        //    //Write checksum
-        //    _i2cPort.beginTransmission((byte)_gpsI2Caddress);
-        //    if (bytesToSend == 1)
-        //        _i2cPort.write(outgoingUBX.payload, 1);
-        //    _i2cPort.write(outgoingUBX.checksumA);
-        //    _i2cPort.write(outgoingUBX.checksumB);
-
-        //    //All done transmitting bytes. Release bus.
-        //    if (_i2cPort.endTransmission() != 0)
-        //        return (SFE_UBLOX_STATUS_I2C_COMM_FAILURE); //Sensor did not ACK
-        //    return (SFE_UBLOX_STATUS_SUCCESS);
-        //}
-
         //Given a packet and payload, send everything including CRC bytesA via Serial port
         void sendSerialCommand(ubxPacket outgoingUBX)
         {
@@ -1287,29 +1008,8 @@ namespace UBLOX
             newArray[bArray.Length] = newByte;
             bArray = newArray;
         }
-        //public void sendSerialCommand(ubxPacket outgoingUBX)
-        //{
-        //    //Write header bytes
-        //    _serialPort.Write(Constants.UBX_SYNCH_1); //μ - oh ublox, you're funny. I will call you micro-blox from now on.
-        //    _serialPort.Write(Constants.UBX_SYNCH_2); //b
-        //    _serialPort.Write(outgoingUBX.cls);
-        //    _serialPort.Write(outgoingUBX.id);
-        //    _serialPort.Write(outgoingUBX.len & 0xFF); //LSB
-        //    _serialPort.Write(outgoingUBX.len >> 8);   //MSB
-
-        //    //Write payload.
-        //    for (int i = 0; i < outgoingUBX.len; i++)
-        //    {
-        //        _serialPort.Write(outgoingUBX.payload[i]);
-        //    }
-
-        //    //Write checksum
-        //    _serialPort.Write(outgoingUBX.checksumA);
-        //    _serialPort.Write(outgoingUBX.checksumB);
-        //}
-
         //Returns true if I2C device ack's
-        public async Task<bool> isConnected(ushort maxWait = 1100)
+        public async Task<bool> IsConnected(ushort maxWait = 1100)
         {
             //if (commType == commTypes.COMM_TYPE_I2C)
             //{
@@ -1354,29 +1054,6 @@ namespace UBLOX
                 msg.checksumB += msg.checksumA;
             }
         }
-        //public void calcChecksum(ubxPacket msg)
-        //{
-        //    msg.checksumA = 0;
-        //    msg.checksumB = 0;
-
-        //    msg.checksumA += msg.cls;
-        //    msg.checksumB += msg.checksumA;
-
-        //    msg.checksumA += msg.id;
-        //    msg.checksumB += msg.checksumA;
-
-        //    msg.checksumA += (msg.len & 0xFF);
-        //    msg.checksumB += msg.checksumA;
-
-        //    msg.checksumA += (msg.len >> 8);
-        //    msg.checksumB += msg.checksumA;
-
-        //    for (ushort i = 0; i < msg.len; i++)
-        //    {
-        //        msg.checksumA += msg.payload[i];
-        //        msg.checksumB += msg.checksumA;
-        //    }
-        //}
 
         //Given a message and a byte, add to rolling "8-Bit Fletcher" checksum
         //This is used when receiving messages from module
@@ -1485,8 +1162,8 @@ namespace UBLOX
             packetAck.classAndIDmatch = SfeUbloxPacketValidity.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
             packetBuf.classAndIDmatch = SfeUbloxPacketValidity.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
 
-            long startTime = Zedf9p.Utils.millis();
-            while (Zedf9p.Utils.millis() - startTime < maxTime)
+            long startTime = Time.millis();
+            while (Time.millis() - startTime < maxTime)
             {
                 if (await checkUbloxInternal(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
                 {
@@ -1532,7 +1209,7 @@ namespace UBLOX
                         if (_printDebug == true)
                         {
                             _debugSerial.Write("waitForACKResponse: data being OVERWRITTEN after ");
-                            _debugSerial.Write((Zedf9p.Utils.millis() - startTime).ToString());
+                            _debugSerial.Write((Time.millis() - startTime).ToString());
                             _debugSerial.WriteLine(" msec");
                         }
                         return SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_OVERWRITTEN; // Data was valid but has been or is being overwritten
@@ -1631,7 +1308,7 @@ namespace UBLOX
             if (_printDebug == true)
             {
                 _debugSerial.Write("waitForACKResponse: TIMEOUT after ");
-                _debugSerial.Write((Zedf9p.Utils.millis() - startTime).ToString());
+                _debugSerial.Write((Time.millis() - startTime).ToString());
                 _debugSerial.WriteLine(" msec.");
             }
 
@@ -1653,8 +1330,8 @@ namespace UBLOX
             packetAck.classAndIDmatch = SfeUbloxPacketValidity.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
             packetBuf.classAndIDmatch = SfeUbloxPacketValidity.SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
 
-            long startTime = Zedf9p.Utils.millis();
-            while (Zedf9p.Utils.millis() - startTime < maxTime)
+            long startTime = Time.millis();
+            while (Time.millis() - startTime < maxTime)
             {
                 if (await checkUbloxInternal(outgoingUBX, requestedClass, requestedID) == true) //See if new data is available. Process bytes as they come in.
                 {
@@ -2414,7 +2091,7 @@ namespace UBLOX
         {
             return await setPortOutput(Constants.COM_PORT_UART2, comSettings, maxWait);
         }
-        public async Task<bool> setUSBOutput(byte comSettings, ushort maxWait = 250)
+        public async Task<bool> SetUSBOutputAsync(byte comSettings, ushort maxWait = 250)
         {
             return await setPortOutput(Constants.COM_PORT_USB, comSettings, maxWait);
         }
@@ -2630,7 +2307,7 @@ namespace UBLOX
         }
 
         //Add a new geofence using UBX-CFG-GEOFENCE
-        public async Task<bool> addGeofence(int latitude, int longitude, uint radius, byte confidence, byte pinPolarity, byte pin, ushort maxWait = 1100)
+        public async Task<bool> AddGeofence(int latitude, int longitude, uint radius, byte confidence, byte pinPolarity, byte pin, ushort maxWait = 1100)
         {
             if (currentGeofenceParams.numFences >= 4)
                 return false; // Quit if we already have four geofences defined
@@ -2722,7 +2399,7 @@ namespace UBLOX
         }
 
         //Clear all geofences using UBX-CFG-GEOFENCE
-        public async Task<bool> clearGeofences(ushort maxWait = 1100)
+        public async Task<bool> ClearGeofences(ushort maxWait = 1100)
         {
             packetCfg.cls = Constants.UBX_CLASS_CFG;
             packetCfg.id = Constants.UBX_CFG_GEOFENCE;
@@ -2746,7 +2423,7 @@ namespace UBLOX
         //Clear the antenna control settings using UBX-CFG-ANT
         //This function is hopefully redundant but may be needed to release
         //any PIO pins pre-allocated for antenna functions
-        public async Task<bool> clearAntPIO(ushort maxWait = 1100)
+        public async Task<bool> ClearAntPIO(ushort maxWait = 1100)
         {
             packetCfg.cls = Constants.UBX_CLASS_CFG;
             packetCfg.id = Constants.UBX_CFG_ANT;
@@ -2762,7 +2439,7 @@ namespace UBLOX
         }
 
         //Returns the combined geofence state using UBX-NAV-GEOFENCE
-        public async Task<bool> getGeofenceState(geofenceState currentGeofenceState, ushort maxWait = 1100)
+        public async Task<bool> GetGeofenceState(geofenceState currentGeofenceState, ushort maxWait = 1100)
         {
             packetCfg.cls = Constants.UBX_CLASS_NAV;
             packetCfg.id = Constants.UBX_NAV_GEOFENCE;
@@ -2793,7 +2470,7 @@ namespace UBLOX
         public async Task<bool> powerSaveMode(bool power_save, ushort maxWait = 1100)
         {
             // Let's begin by checking the Protocol Version as UBX_CFG_RXM is not supported on the ZED (protocol >= 27)
-            byte protVer = await getProtocolVersionHigh(maxWait);
+            byte protVer = await GetProtocolVersionHigh(maxWait);
             /*
             if (_printDebug == true)
             {
@@ -2841,7 +2518,7 @@ namespace UBLOX
         public async Task<byte> getPowerSaveMode(ushort maxWait = 1100)
         {
             // Let's begin by checking the Protocol Version as UBX_CFG_RXM is not supported on the ZED (protocol >= 27)
-            byte protVer = await getProtocolVersionHigh(maxWait);
+            byte protVer = await GetProtocolVersionHigh(maxWait);
             /*
             if (_printDebug == true)
             {
@@ -3540,25 +3217,25 @@ namespace UBLOX
 
         //Get the current protocol version of the u-blox module we're communicating with
         //This is helpful when deciding if we should call the high-precision Lat/Long (HPPOSLLH) or the regular (POSLLH)
-        public async Task<byte> getProtocolVersionHigh(ushort maxWait = 500)
+        public async Task<byte> GetProtocolVersionHigh(ushort maxWait = 500)
         {
             if (!moduleQueried.versionNumber)
-                await getProtocolVersion(maxWait);
+                await GetProtocolVersion(maxWait);
             return versionHigh;
         }
 
         //Get the current protocol version of the u-blox module we're communicating with
         //This is helpful when deciding if we should call the high-precision Lat/Long (HPPOSLLH) or the regular (POSLLH)
-        public async Task<byte> getProtocolVersionLow(ushort maxWait = 500)
+        public async Task<byte> GetProtocolVersionLow(ushort maxWait = 500)
         {
             if (!moduleQueried.versionNumber)
-                await getProtocolVersion(maxWait);
+                await GetProtocolVersion(maxWait);
             return versionLow;
         }
 
         //Get the current protocol version of the u-blox module we're communicating with
         //This is helpful when deciding if we should call the high-precision Lat/Long (HPPOSLLH) or the regular (POSLLH)
-        public async Task<bool> getProtocolVersion(ushort maxWait = 500)
+        public async Task<bool> GetProtocolVersion(ushort maxWait = 500)
         {
             //Send packet with only CLS and ID, length of zero. This will cause the module to respond with the contents of that CLS/ID.
             packetCfg.cls = Constants.UBX_CLASS_MON;
@@ -3657,7 +3334,7 @@ namespace UBLOX
 
         //Relative Positioning Information in NED frame
         //Returns true if commands was successful
-        public async Task<bool> getRELPOSNED(ushort maxWait = 1100)
+        public async Task<bool> GetRELPOSNED(ushort maxWait = 1100)
         {
             packetCfg.cls = Constants.UBX_CLASS_NAV;
             packetCfg.id = Constants.UBX_NAV_RELPOSNED;
@@ -3726,7 +3403,7 @@ namespace UBLOX
             if (await sendCommand(packetCfg, maxWait) != SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_RECEIVED)
                 return false; //If command send fails then bail
 
-            await checkUblox();
+            await CheckUblox();
 
             // payload should be loaded.
             imuMeas.version = extractByte(4);
@@ -3748,7 +3425,7 @@ namespace UBLOX
             if (await sendCommand(packetCfg, maxWait) != SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_RECEIVED)
                 return false; //If command send fails then bail
 
-            await checkUblox();
+            await CheckUblox();
 
             // Validity of each sensor value below
             uint validity = extractLong(0);
@@ -3783,7 +3460,7 @@ namespace UBLOX
             if (await sendCommand(packetCfg, maxWait) != SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_RECEIVED)
                 return false; //If command send fails then bail
 
-            await checkUblox();
+            await CheckUblox();
 
             uint timeStamp = extractLong(0);
             uint flags = extractInt(4);
@@ -3823,7 +3500,7 @@ namespace UBLOX
             if (await sendCommand(packetCfg, maxWait) != SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_RECEIVED)
                 return false; //If command send fails then bail
 
-            await checkUblox();
+            await CheckUblox();
 
             uint bitField = extractLong(4);
             imuMeas.rawDataType = (bitField & 0xFF000000) >> 23;
@@ -3849,7 +3526,7 @@ namespace UBLOX
             if (sensor > ubloxSen.numSens)
                 return (SfeUbloxStatus.SFE_UBLOX_STATUS_OUT_OF_RANGE);
 
-            await checkUblox();
+            await CheckUblox();
 
             byte offset = 4;
 
@@ -3890,7 +3567,7 @@ namespace UBLOX
                 //return (sfe_ublox_status_e.SFE_UBLOX_STATUS_FAIL); //If command send fails then bail
                 return false;
 
-            await checkUblox();
+            await CheckUblox();
 
             vehAtt.roll = (int)extractLong(8);
             vehAtt.pitch = (int)extractLong(12);

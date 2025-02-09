@@ -1,0 +1,825 @@
+using Serilog;
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Ports;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Zedf9p.Enums;
+using Zedf9p.Exceptions;
+using Zedf9p.Models;
+using Zedf9p.SerialInterface;
+using Zedf9p.Sockets;
+using Zedf9p.Utils;
+
+namespace Zedf9p.F9p
+{
+    internal class F9pDriver : IF9pDriver
+    {
+        const int RTCM_OUTGOING_BUFFER_SIZE = 500;          //The size of the RTCM correction data varies but in general it is approximately 2000 bytes every second (~2500 bytes every 10th second when 1230 is transmitted).
+        const int NTRIP_INCOMING_BUFFER_SIZE = 10000;       //Size of incoming buffer for the connection with NTRIP Caster
+        const int SYNC_INCOMING_BUFFER_SIZE = 10000;        //Size of incoming buffer for the connection with NTRIP Caster
+        const int NMEA_OUTGOING_STRING_MAXLEN = 300;        //Size of incoming buffer for the connection with NTRIP Caster
+
+        const int CLIENT_NAV_FREQUENCY = 20;                //Sets how often GPS module will spit out data
+        const int SERVER_NAV_FREQUENCY = 4;                 //Sets how often GPS module will spit out data
+
+        const int NTRIP_RECEIVE_TIMEOUT = 30;               //How many seconds we wait until we dicede there is an Ntrip receive timeout
+
+        // TEST CONSTANTS
+        const bool NTRIP_SERVER_SIMULATION = false;         // If set to true the driver will not connect to NTRIP
+        const bool IGNORE_DISCONNECTED_SOCKET = true;       // True is a testvalue
+
+        // Ublox f9p gps module
+        UBLOX.SFE_UBLOX_GPS _ublox;
+
+        //Gps Module Settings       
+        private readonly string _portName;                  //port the module is connected to (COM#) or ttyACM#
+        private SerialPort _serialPort;                     //instance of serial port for communication with module
+
+        // NTRIP Caster settings
+        Socket _ntripCasterSocket;   //socket for connection with NTRIP caster
+        readonly byte[] _ntripOutBuffer = new byte[RTCM_OUTGOING_BUFFER_SIZE];
+        readonly byte[] _ntripInBuffer = new byte[NTRIP_INCOMING_BUFFER_SIZE];
+        int _rtcmFrame = 0;           //number of currect rtcm frame (for incoming rtcm data buffer control)
+        readonly int _ntripPort;              //caster port
+        readonly string _ntripServer;         //caster server        
+        readonly string _ntripMountpoint;     //caster mountpoint
+        readonly string _ntripPassword;       //caster password
+
+        //SurveyIn Mode vars
+        float _surveyAccuracy;         //Minimum accuracy to be accepted before survey completes in meters (3.000F)/float
+        int _surveyTime;         //minimum time required for the survey to complete
+
+        //Fixed Mode vars
+        int _latitude = 406028960;
+        int _longitude = -800735223;
+        int _altitude = 284000;
+
+        // f9p socket for interapplication communication with node express server
+        ISocketCommunications _socketCommunications;
+
+        //initialize buffer for sync channel
+        byte[] _syncInBuffer = new byte[SYNC_INCOMING_BUFFER_SIZE];
+
+        //initialize buffer for nmea channel
+        string _nmeaOutBuffer = "";
+
+        //Current operation mode
+        OperationMode _driverOperationMode;
+        public void SetMode(OperationMode mode) => _driverOperationMode = mode;
+        public OperationMode GetMode() => _driverOperationMode;
+
+        //Current receiver mode (in server configuration)
+        ReceiverMode _receiverMode = ReceiverMode.SurveyIn;
+
+        //Reference to currently running main thread
+        Task _mainRunningThread;
+
+        //Cancellation token for main running thread
+        CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
+        //Indicator of next NTRIP packet send status (cannot send them to often)
+        long _nextNtripStatusSendTime;
+
+        //Class that holds current state of errors
+        private readonly ErrorFlags _errorFlags;
+
+        // Serial Port handling Interface
+        readonly ISerialPortHandler _serialPortHandler;
+
+        readonly ILogger _logger;
+
+
+        /// <summary>
+        /// Main constructor, takes in all the input params for the driver
+        /// </summary>
+        /// <param name="inputParams"></param>
+        public F9pDriver(
+            InputParams inputParams,
+            ISocketCommunications socketCommunications,
+            ISerialPortHandler serialPortHandler,
+            ILogger logger)
+        {
+            // Using null-coalescing operator for optional fields (to avoid null values)
+            _portName = inputParams.Port ?? string.Empty; // Default to empty string if null
+            _ntripMountpoint = inputParams.NtripMountpoint ?? string.Empty; // Default to empty string if null
+            _ntripPassword = inputParams.NtripPassword ?? string.Empty; // Default to empty string if null
+            _ntripPort = inputParams.NtripPort; // No need for null check, int has default value
+            _ntripServer = inputParams.NtripServer; // Assumed default value in InputParams
+            _surveyAccuracy = inputParams.RtcmAccuracy; // Assumed default value in InputParams
+            _surveyTime = inputParams.RtcmSurveyTime; // Assumed default value in InputParams
+
+            _socketCommunications = socketCommunications;
+            _serialPortHandler = serialPortHandler;
+            _logger = logger;
+
+            _errorFlags = new ErrorFlags(SendErrors);
+        }
+
+        /// <summary>
+        /// Initialize driver and connect sockets
+        /// </summary>
+        /// <param name="mode">Mode of operation</param>
+        /// <returns></returns>
+        public async Task Initialize(OperationMode mode, CancellationToken cancellationToken)
+        {
+            //set current mode
+            _driverOperationMode = mode;
+
+            _logger.Debug($"Operating mode: {_driverOperationMode}");
+
+            if (_driverOperationMode == OperationMode.Server)
+            {
+                //start NTRIP server (base station)
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+            }
+            else if (_driverOperationMode == OperationMode.Client)
+            {
+                //start NTRIP client (rover)
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripClient, _cancellationTokenSource.Token);
+            }
+
+            // Start monitoring in a separate task
+            _ = MaintainRunningThreads(cancellationToken);
+        }
+
+        async Task MaintainRunningThreads(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                //Check sync socket periodically
+                await CheckSyncDataSocket();
+
+                await Task.Delay(100, cancellationToken);
+            }
+        }
+
+        /// <summary>
+        /// Once module is configured for a specific operation mode this will keep it running
+        /// </summary>
+        /// <returns></returns>
+        public async Task Run()
+        {
+            _logger.Information("Starting 'Run' process as " + _driverOperationMode.ToString());
+
+            //Clear any errors from setup
+            _errorFlags.ClearErrors();
+
+            //Running server operations
+            if (_driverOperationMode == OperationMode.Server)
+            {
+                //ATTACH NMEA HANDLER
+                //_myGPS.attachNMEAHandler(processNmea_Server);
+
+                //ATTACH RTCM HANDLER            
+                //_myGPS.attachRTCMHandler(processRtcm_Server);
+
+                if (await _ublox.GetProtocolVersion()) _logger.Information("Ublox Protocol Version: " + await _ublox.GetProtocolVersionHigh() + "." + await _ublox.GetProtocolVersionLow());
+
+                //var runThreadCancellationToken = RunThreads.Peek().tokenSource.Token;
+
+                //Request receiver mode every 3 seconds
+                var timer = new System.Timers.Timer(3000);
+                timer.AutoReset = true; // the key is here so it repeats
+                timer.Elapsed += async (sender, e) =>
+                {
+                    //_logger.Information("Timer run in thread " + Thread.CurrentThread.ManagedThreadId);
+
+                    //Get receiver mode
+                    //var tmode3 = await _myGPS.getTmode3();
+                    //if (tmode3 != null)
+                    //{
+                    //    _logger.Information(tmode3.getMode());
+                    //    _socketCommunications.SendSyncData("RECEIVER_MODE:" + tmode3.getMode());
+                    //}
+                };
+                timer.Start();
+
+                //Receive rtcm updates and send them to proper channels
+                while (_ublox != null)
+                {
+                    //if base station configures successfully start pulling data from it
+                    await _ublox.CheckUblox(); //See if new data is available. Process bytes as they come in.
+
+                    Thread.Sleep(10);
+
+                    if (_cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        _logger.Information("Run thread " + Thread.CurrentThread.ManagedThreadId + " exiting...");
+                        timer.Stop();
+                        timer.Dispose();
+                        break;
+                    }
+                }
+            }
+            // Running client operations
+            else if (_driverOperationMode == OperationMode.Client)
+            {
+                //_logger.Information("attaching nmea handler...");
+
+                //ATTACH NMEA HANDLER
+                //_myGPS.attachNMEAHandler(processNmea_Client);        //this is not needed, GPS coords will be passed thru UBX        
+
+                //increase nav message output frequency
+                _logger.Information("Set nav frequency, " + (await _ublox.setNavigationFrequency(CLIENT_NAV_FREQUENCY) ? "OK" : "Failed"));
+                _logger.Information("Current update rate: " + await _ublox.getNavigationFrequency());
+
+
+                //Set USB output to UBX only, no NMEA Noise
+                await _ublox.SetUSBOutputAsync(UBLOX.Constants.COM_TYPE_UBX);
+
+                //SEND RTCM to module when it becomes available
+                new Task(() =>
+                {
+                    var lastRtcmDataReceived = Time.millis();
+
+                    while (_ntripCasterSocket != null && _ntripCasterSocket.Connected && _socketCommunications.IsSyncDataSocketConnected())
+                    {
+                        if (_ntripCasterSocket.Available > 0)
+                        {
+                            var ntripRcvLen = _ntripCasterSocket.Receive(_ntripInBuffer);
+
+                            if (ntripRcvLen > 0)
+                            {
+                                _logger.Information("Sending RTCM info to F9p module...");
+
+                                _ublox.send(_ntripInBuffer, ntripRcvLen);
+
+                                lastRtcmDataReceived = Time.millis();
+                            }
+
+                            _errorFlags.Remove("NTRIP_DATA_RCV_TIMEOUT");
+                        }
+
+                        //if no RTCM data received for longer than 10 minutes send error to UI
+                        if (Time.millis() > lastRtcmDataReceived + NTRIP_RECEIVE_TIMEOUT * 1000)
+                        {
+                            _errorFlags.Add("NTRIP_DATA_RCV_TIMEOUT");
+                        }
+
+                        Thread.Sleep(10);
+                    }
+
+                    _logger.Information("Sockets needed for RTCM communication disconnected");
+                }).Start();
+
+
+                //Output nav data to console every nav cycle
+                while (_socketCommunications.IsSyncDataSocketConnected())
+                {
+                    await SendPositionData(["lat", "lon", "alt", "acc", "head"]);
+
+                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
+                }
+
+                _logger.Information("Driver Exited...");
+            }
+            else if (_driverOperationMode == OperationMode.Idle)
+            {
+
+                //Output nav data to console every nav cycle
+                while (_socketCommunications.IsSyncDataSocketConnected())
+                {
+                    await SendPositionData(["lat", "lon", "alt", "acc", "head"]);
+
+                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Quesries module for most recent position information and sends all necessary data to UI
+        /// <param name="dataPoints">All data point that needed to be outputed (lat, lon, alt, acc, head)</param>
+        /// </summary>
+        public async Task SendPositionData(string[] dataPoints)
+        {
+            //GET HIGH RESOLUTION DATA
+            double latitude = dataPoints.Contains("lat") ? await _ublox.getHighResLatitude() / 10000000D : 0;
+            //int latitudeHp = await _myGps.getHighResLatitudeHp();
+            double longitude = dataPoints.Contains("lon") ? await _ublox.getHighResLongitude() / 10000000D : 0;
+            int altitude = dataPoints.Contains("alt") ? await _ublox.getAltitude() / 1000 : 0;
+            uint accuracy = dataPoints.Contains("acc") ? await _ublox.getPositionAccuracy() : 0;
+            double heading = dataPoints.Contains("head") ? await _ublox.getHeading() / 100000D : 0;
+
+
+            if (dataPoints.Contains("lat")) _socketCommunications.SendSyncData("LATITUDE:" + latitude);
+            if (dataPoints.Contains("lon")) _socketCommunications.SendSyncData("LONGITUDE:" + longitude);
+            if (dataPoints.Contains("alt")) _socketCommunications.SendSyncData("ALTITUDE:" + altitude);
+            if (dataPoints.Contains("acc")) _socketCommunications.SendSyncData("ACCURACY:" + accuracy);
+            if (dataPoints.Contains("head")) _socketCommunications.SendSyncData("HEADING:" + heading);
+        }
+
+        /// <summary>
+        /// Send error flags to UI, this error handler is being called by the "ErrorFlags" class then new error comes up
+        /// </summary>
+        void SendErrors(ErrorFlags errorFlags)
+        {
+            if (_socketCommunications.IsSyncDataSocketConnected()) _socketCommunications.SendSyncData("ERRORS:" + JsonSerializer.Serialize(errorFlags));
+            else _logger.Information("Cannot send error output, sync socket is closed...");
+        }
+
+        /// <summary>
+        /// Destructof of class, basically disconnects all sockets
+        /// </summary>
+        /// <returns></returns>
+        public void Cleanup()
+        {
+            // in the end, disconnect and close the socket to cleanup
+            _socketCommunications.CleanupSockets();
+
+            _ntripCasterSocket?.Disconnect(false);
+            _ntripCasterSocket?.Close();
+        }
+
+        /// <summary>
+        /// Configure f9p module as ntrip client (will consume data from NTRIP server and adjust coordinates)
+        /// </summary>
+        /// <returns></returns>
+        async Task ConfigureGpsAsNtripClient()
+        {
+            //open serial port
+            _serialPort = new SerialPort(_portName, 115200, Parity.None, 8, StopBits.One);
+
+            // Set the read/write timeouts
+            _serialPort.ReadTimeout = 500;
+            _serialPort.WriteTimeout = 500;
+
+            _logger.Information("Trying to open port " + _portName);
+            _serialPort.Open();
+
+            //_logger.Information("Create serial port connection for f9p module...");
+            _ublox = new UBLOX.SFE_UBLOX_GPS();
+            await _ublox.BeginAsync(_serialPort);
+
+            //setup for debugging(needs to be a different serial port)
+            //_myGPS.enableDebugging(_serialPort, true);
+
+            //Try reconnecting to NTRIP Caster 10 times every 10 seconds if connection fails 
+            Threading.RetryHelper<NtripException>(() =>
+            {
+                //Update position data in UI during these retries
+                SendPositionData(new[] { "lat", "lon", "alt", "acc", "head" }).GetAwaiter().GetResult();
+
+                //start sending data to ntrip caster
+                ConnectNtripCasterSocketAsync().GetAwaiter().GetResult();
+
+                //send credentials to ntrip caster
+                string ntripWelcomeMessage = "GET /" + _ntripMountpoint + " /HTTP/1.0\r\n";
+                ntripWelcomeMessage += "User-Agent: NTRIP SOLVIT/1.0.1\r\n";
+                //ntripWelcomeMessage += "Accept: */\r\n*";
+                //ntripWelcomeMessage += "Connection: close \r\n";
+                //ntripWelcomeMessage += "\r\n";
+
+                _logger.Information("Trying to authenticate to NTRIP caster");
+
+
+
+                //Send auth request
+                _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(ntripWelcomeMessage));
+
+                //Receive respone with ICY 200 OK or ERROR - Bad Password
+                var rcvLen = _ntripCasterSocket.Receive(_ntripInBuffer);
+                var ntripResponseMessage = Encoding.ASCII.GetString(_ntripInBuffer, 0, rcvLen);
+
+                if (ntripResponseMessage.Contains("ICY 200 OK\r\n"))
+                {
+                    _logger.Information("Authentication passed!");
+                }
+                else if (ntripResponseMessage.Contains("SOURCETABLE 200 OK\r\n"))
+                {
+                    throw new NtripException("Authentication passed. Sourcetable received but no RTCM data. base station is down?");
+                }
+                else
+                {
+                    //send error response back to sync socket
+                    _errorFlags.Add("NTRIP_CONNECTION_ERROR");
+
+                    _logger.Information("NTRIP Response: \"" + ntripResponseMessage.Trim() + "\"");
+                    throw new NtripException("NTRIP Authentication error or station down");
+                }
+
+            }, 10, new TimeSpan(0, 0, 10), () => _logger.Information("trying to reconnect in 10 seconds..."));
+
+            await Run();
+
+        }
+
+        /// <summary>
+        /// Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
+        /// </summary>
+        /// <returns></returns>
+        async Task ConfigureGpsAsNtripServer()
+        {
+            _logger.Information("Create serial port connection for f9p module...");
+            _serialPort = await _serialPortHandler.OpenPortAsync(_portName, TimeSpan.FromSeconds(5));
+
+            _ublox = new UBLOX.SFE_UBLOX_GPS();
+            _ublox.EnableDebugLogging(_logger);
+            await _ublox.BeginAsync(_serialPort);
+
+            // Set USB output to UBX AND RTCM only, no NMEA Noise
+            await _ublox.SetUSBOutputAsync(UBLOX.Constants.COM_TYPE_UBX | UBLOX.Constants.COM_TYPE_RTCM3);
+
+            // Engage proper receiver mode
+            switch (_receiverMode)
+            {
+                case ReceiverMode.SurveyIn: await StartSurveyAsync(_surveyTime, _surveyAccuracy); break;
+                case ReceiverMode.Fixed: await StartFixedAsync(_latitude, _longitude, _altitude); break;
+            }
+
+            // Connect to to ntrip caster
+            await ConnectNtripCasterSocketAsync();
+
+            {
+                // AUTHENTICATE ON NTRIP CASTER AS SERVER
+                if (!NTRIP_SERVER_SIMULATION)
+                {
+                    // Send credentials to ntrip caster
+                    string ntripWelcomeMessage = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
+                    ntripWelcomeMessage += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
+
+                    // Send auth request
+                    _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(ntripWelcomeMessage));
+
+                    // Receive respone with ICY 200 OK or ERROR - Bad Password
+                    var rcvLen = _ntripCasterSocket.Receive(_ntripInBuffer);
+                    var ntripResponseMessage = Encoding.ASCII.GetString(_ntripInBuffer, 0, rcvLen); //take first 30 bytes from response 
+
+                    if (ntripResponseMessage.Equals("ICY 200 OK\r\n"))
+                    {
+                        _logger.Information("Authentication passed!");
+                    }
+                    else
+                    {
+                        _logger.Information("Authentiction error: " + ntripResponseMessage);
+                        throw new Exception("NTRIP Authentication error");
+                    }
+                }
+            }
+
+            await Run();
+        }
+
+        /// <summary>
+        /// Opens the connection to the NTRIP (creates a socket)
+        /// </summary>
+        /// <returns></returns>
+        async Task ConnectNtripCasterSocketAsync()
+        {
+            _logger.Debug("Connecting Ntrip Caster Socket...");
+
+            if (NTRIP_SERVER_SIMULATION)
+            {
+                _logger.Debug("NTRIP SIMULATION IS ENABLED");
+                return;
+            }
+
+            if (_ntripServer != null && _ntripMountpoint != null && _ntripPassword != null && _ntripPort != 0)
+            {
+                _logger.Debug("Get DNS host entry...");
+
+                //parse host entry to get a IP address for connection
+                var hostEntry = await Dns.GetHostEntryAsync(_ntripServer);
+
+                //Connect to server
+                _ntripCasterSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+                _logger.Information("Trying to connect to NTRIP caster");
+
+                _ntripCasterSocket.Connect(new IPEndPoint(hostEntry.AddressList[0], _ntripPort));
+            }
+            else
+            {
+                throw new Exception("NTRIP configuration or credentials not provided");
+            }
+        }
+
+        //handler for NMEA data coming from the module when creating client (-client)
+        async Task processNmea_Client(char incoming)
+        {
+            processNmea_Server(incoming);
+        }
+
+        /// <summary>
+        /// handler for NMEA data coming from the module when creating server (-server)
+        /// </summary>
+        /// <param name="incoming">Incoming byte</param>
+        /// <returns></returns>
+        async Task processNmea_Server(char incoming)
+        {
+            _nmeaOutBuffer += incoming;
+
+            //if (incoming == '\n') _logger.Information("NMEA NEWLINE RECEIVED");
+            //if (_nmeaOutBuffer.Length >= NMEA_OUTGOING_STRING_MAXLEN) _logger.Information("NMEA MAXLEN ACHIEVED");
+
+
+            if (incoming == '\n' || _nmeaOutBuffer.Length >= NMEA_OUTGOING_STRING_MAXLEN)
+            {
+                //send nmea info thru socket to the http server app
+                _socketCommunications.SendNmeaData(_nmeaOutBuffer);
+                _nmeaOutBuffer = "";
+            }
+        }
+
+        /// <summary>
+        /// Handler for RTCM data coming from the module when creating server (-server)
+        /// </summary>
+        /// <param name="incoming">Incoming byte</param>
+        /// <returns></returns>
+        async Task ProcessRtcm_Server(byte incoming)
+        {
+
+            //send rtcm info thru socket to the UI http server app
+            _socketCommunications.SendRtcmData(incoming);
+
+            //push RTCM bute into the receive buffer until it reaches maximum defined size
+            _ntripOutBuffer[_rtcmFrame++] = incoming;
+
+            //once max buffer size is reached send rtcm data to the RTCM caster thru the socket via NTRIP protocol
+            if (_rtcmFrame == RTCM_OUTGOING_BUFFER_SIZE)
+            {
+                _rtcmFrame = 0; //reset buffer
+
+                if (NTRIP_SERVER_SIMULATION)
+                {
+                    if (Time.millis() > _nextNtripStatusSendTime)
+                    {
+                        _socketCommunications.SendSyncData("NTRIP_SENT:");
+                        _nextNtripStatusSendTime = Time.millis() + 1000;
+                    }
+                    _logger.Information("Sending RTCM to NTRIP Server");
+                    Thread.Sleep(250); return;
+                }
+
+                //check if ntrip socket is defined and connected
+                if (_ntripCasterSocket != null && _ntripCasterSocket.Connected)
+                {
+                    _logger.Information("Sending RTCM to NTRIP Caster");
+
+                    //Do not send this more than once a second to sync
+                    if (Time.millis() > _nextNtripStatusSendTime)
+                    {
+                        _socketCommunications.SendSyncData("NTRIP_SENT:");
+                        _nextNtripStatusSendTime = Time.millis() + 1000;
+                    }
+
+                    _ntripCasterSocket.Send(_ntripOutBuffer);
+                }
+                else
+                {
+                    //check if socket was closed
+                    _logger.Information("Ntrip Socket disconnected?");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Check incoming data thru the sync socket for commands coming from the frontend
+        /// </summary>
+        /// <returns></returns>
+        async Task CheckSyncDataSocket()
+        {
+            //check if socket is connected
+            if (_socketCommunications.IsSyncDataSocketConnected())
+            {
+                //check if anything in available in a socket
+                var syncRcvLen = _socketCommunications.ReceiveSyncData(_syncInBuffer);
+
+                if (syncRcvLen > 0)
+                {
+                    var syncMessage = Encoding.ASCII.GetString(_syncInBuffer, 0, syncRcvLen);
+
+                    _logger.Information("Sync Message Received: " + syncMessage);
+
+                    try
+                    {
+                        var command = new SyncIncomingCommand(syncMessage);
+
+                        await ProcessSyncCommand(command);
+                    }
+                    catch (UnknownSyncCommandException e)
+                    {
+                        //spit out errors if anything dyring command parsing
+                        _logger.Information(e.Message);
+                    }
+                }
+                //else
+                //{
+                //    _logger.Information("Nothing received thru sync buffer");
+                //}
+            }
+            else
+            {
+                if (!IGNORE_DISCONNECTED_SOCKET)
+                    throw new SyncSocketException("Sync Socket Disconnected, cannot continue, driver must shutdown...");
+            }
+        }
+
+        async Task ProcessSyncCommand(SyncIncomingCommand command)
+        {
+
+            if (SyncIncomingCommandType.RESTART_SURVEY == command.Type)
+            {
+                //Receive new accuracy from UI
+                _surveyAccuracy = command.getValue<float>();
+                _surveyTime = command.getValue<int>(1);
+
+                //Disable receiver survey mode bewfore re-enabling with new settings
+                if (await _ublox.disableReceiver()) _logger.Information("Receiver disabled");
+
+                //stop main running thread
+                _cancellationTokenSource.Cancel();
+
+                //wait for running thread to stop
+                _mainRunningThread.Wait();
+
+                //set current mode
+                _receiverMode = ReceiverMode.SurveyIn;
+
+                //Reset cancellation token
+                _cancellationTokenSource = new CancellationTokenSource();
+
+                //enable receiver with new settings
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+
+            }
+            else if (SyncIncomingCommandType.RESTART_FIXED == command.Type)
+            {
+
+                //Receive new accuracy from UI
+                _latitude = int.Parse(command.getValue<string>().Replace(".", ""));
+                _longitude = int.Parse(command.getValue<string>(1).Replace(".", ""));
+                _altitude = command.getValue<int>(2);
+
+                //Disable receiver survey mode bewfore re-enabling with new settings
+                if (await _ublox.disableReceiver()) _logger.Information("Receiver disabled");
+
+                //stop main running thread
+                _cancellationTokenSource.Cancel();
+
+                //wait for running thread to stop
+                _mainRunningThread.Wait();
+
+                //set current mode
+                _receiverMode = ReceiverMode.Fixed;
+
+                //Reset cancellation token
+                _cancellationTokenSource = new CancellationTokenSource();
+
+                //enable receiver with new settings
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+
+            }
+        }
+
+        /// <summary>
+        /// Enables Survey mode on f9p device
+        /// </summary>
+        /// <param name="rtcmSurveyTime"></param>
+        /// <param name="rtcmAccuracy"></param>
+        /// <returns></returns>
+        async Task StartSurveyAsync(int rtcmSurveyTime, float rtcmAccuracy)
+        {
+            if (_surveyAccuracy == 0 || _surveyTime == 0) throw new InvalidDataException("Survey accuracy or minimum time not provided, cannot continue...");
+
+            _logger.Information("Enable Survey Mode, minimum " + rtcmSurveyTime + "sec and minimum accuracy " + rtcmAccuracy + " meters");
+
+            var moduleResponse = await _ublox.enableSurveyMode((ushort)rtcmSurveyTime, rtcmAccuracy);
+
+            if (!moduleResponse) throw new Exception("Unable to properly configure module");
+
+            await disableRtcmMessagesOnUSB();
+            //_myGPS.attachRTCMHandler(null);
+
+            //Get receiver mode
+            var surveyMode = await _ublox.getTmode3();
+            _logger.Information("Accuracy: " + surveyMode.GetAccuracyLimit() + "m");
+            _socketCommunications.SendSyncData($"SET_ACCURACY: {surveyMode.GetAccuracyLimit()}");
+            _logger.Information("Mode: " + surveyMode.GetMode().ToString());
+            _socketCommunications.SendSyncData($"RECEIVER_MODE: {surveyMode.GetMode()}");
+
+            _logger.Information("Start requestiong survey status...");
+
+            //set proper navigation frequency for base
+            await _ublox.setNavigationFrequency(4);
+
+            //Begin waiting for survey to complete
+            while (_ublox.svin.valid == false)
+            {
+                //exit if cancellation requested
+                if (_cancellationTokenSource.Token.IsCancellationRequested) return;
+
+                //check sync data socket for updates
+                await CheckSyncDataSocket();
+
+                //Query module for SVIN status with 2000ms timeout (req can take a long time)
+                moduleResponse = await _ublox.getSurveyStatus(2000);
+
+                //if module response if always true
+                if (moduleResponse)
+                {
+                    //send data back to UI
+                    await SendPositionData(["lat", "lon", "alt"]); //add regular data
+                    _socketCommunications.SendSyncData("ACCURACY:" + _ublox.svin.meanAccuracy.ToString());
+                    _socketCommunications.SendSyncData("SURVEY_TIME:" + _ublox.svin.observationTime.ToString());
+                    _socketCommunications.SendSyncData("SURVEY_VALID:" + _ublox.svin.valid.ToString());
+
+
+                    // Show output in a console
+                    var output = "Time elapsed: " + _ublox.svin.observationTime + "s";
+                    output += " Accuracy: " + _ublox.svin.meanAccuracy + "m";
+                    output += " Is Valid?: " + _ublox.svin.valid;
+                    _logger.Information(output);
+                }
+                else
+                {
+                    _logger.Information("SVIN request failed");
+                }
+
+                await _ublox.CheckUblox(); //See if new data is available in COM PORT and consume it
+
+                await Task.Delay(100);
+            }
+
+            // Send location data again in case survey has started as valid already
+            {
+                await SendPositionData(["lat", "lon", "alt", "acc"]);
+            }
+
+            _logger.Information("Base survey complete! RTCM can now be broadcast");
+
+            await enableRtcmMessagesOnUSB();
+            //_myGPS.attachRTCMHandler(processRtcm_Server);
+        }
+
+        /// <summary>
+        /// Enables Fixed mode on f9p device
+        /// </summary>
+        /// <param name="latitude"></param>
+        /// <param name="longitude"></param>
+        /// <param name="altitude"></param>
+        /// <returns></returns>
+        async Task StartFixedAsync(int latitude, int longitude, int altitude)
+        {
+
+            if (latitude == 0 || longitude == 0 || altitude == 0) throw new InvalidDataException("Latitude, longitude or altitude not provided, cannot continue...");
+
+            await disableRtcmMessagesOnUSB();
+
+            _logger.Information("Enable Fixed Mode, Lat: " + latitude + " Lon: " + longitude + " Alt: " + altitude);
+
+            var moduleResponse = await _ublox.enableFixedMode(latitude, longitude, altitude); //Enable Survey in, 60 seconds, 5.0m  
+
+            var surveyMode = await _ublox.getTmode3();
+            _socketCommunications.SendSyncData("RECEIVER_MODE:" + surveyMode.GetMode());
+
+            if (!moduleResponse) throw new Exception("Unable to properly configure module");
+
+            await SendPositionData(["lat", "lon", "alt", "acc"]);
+
+            _logger.Information("Base setting complete! RTCM can now be broadcast");
+
+            await enableRtcmMessagesOnUSB();
+        }
+
+        async Task enableRtcmMessagesOnUSB()
+        {
+
+            _logger.Information("Enable RTCM Messaging on USB");
+
+            var moduleResponse = await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1005, UBLOX.Constants.COM_PORT_USB, 1);
+            moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1074, UBLOX.Constants.COM_PORT_USB, 1);
+            moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1084, UBLOX.Constants.COM_PORT_USB, 1);
+            moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1094, UBLOX.Constants.COM_PORT_USB, 1);
+            moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1124, UBLOX.Constants.COM_PORT_USB, 1);
+            moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1230, UBLOX.Constants.COM_PORT_USB, 10);
+
+            if (!moduleResponse) throw new Exception("Unable to properly configure module");
+
+            _ublox.attachRTCMHandler(ProcessRtcm_Server);
+        }
+
+        async Task disableRtcmMessagesOnUSB()
+        {
+
+            _logger.Information("Disable RTCM Messaging on USB");
+
+            var moduleResponse = await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1005, UBLOX.Constants.COM_PORT_USB);
+            moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1074, UBLOX.Constants.COM_PORT_USB);
+            moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1084, UBLOX.Constants.COM_PORT_USB);
+            moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1094, UBLOX.Constants.COM_PORT_USB);
+            moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1124, UBLOX.Constants.COM_PORT_USB);
+            moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1230, UBLOX.Constants.COM_PORT_USB);
+
+            if (!moduleResponse) throw new Exception("Unable to properly configure module");
+
+            _ublox.attachRTCMHandler(null);
+        }
+    }
+}

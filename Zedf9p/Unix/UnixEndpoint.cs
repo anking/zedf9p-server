@@ -30,10 +30,12 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace System.Net
+namespace Zedf9p.Unix
 {
     public class UnixEndPoint : EndPoint
     {

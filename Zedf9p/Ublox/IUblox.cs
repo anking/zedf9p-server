@@ -11,7 +11,7 @@ namespace UBLOX
         //bool begin(TwoWire &wirePort = Wire, byte deviceAddress = 0x42); //Returns true if module is detected
         //serialPort needs to be perviously initialized to correct baud rate
         //bool begin(Stream &serialPort); //Returns true if module is detected
-        Task<bool> begin(SerialPort serialPort); //Returns true if module is detected
+        Task<bool> BeginAsync(SerialPort serialPort); //Returns true if module is detected
 
         //Control the size of the internal I2C transaction amount
         //void setI2CTransactionSize(byte bufferSize);
@@ -22,11 +22,11 @@ namespace UBLOX
 
         //Returns true if device answers on _gpsI2Caddress address or via Serial
         //maxWait is only used for Serial
-        Task<bool> isConnected(ushort maxWait = 1100);
+        Task<bool> IsConnected(ushort maxWait = 1100);
 
         //Changed in V1.8.1: provides backward compatibility for the examples that call checkUblox directly
         //Will default to using packetCfg to look for explicit autoPVT packets so they get processed correctly by processUBX
-        Task<bool> checkUblox(byte requestedClass = Constants.UBX_CLASS_NAV, byte requestedID = Constants.UBX_NAV_PVT); //Checks module with user selected commType
+        Task<bool> CheckUblox(byte requestedClass = Constants.UBX_CLASS_NAV, byte requestedID = Constants.UBX_NAV_PVT); //Checks module with user selected commType
 
         //bool checkUbloxI2C(ubxPacket incomingUBX, byte requestedClass, byte requestedID);    //Method for I2C polling of data, passing any new bytes to process()
         Task<bool> checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID); //Method for serial polling of data, passing any new bytes to process()
@@ -124,7 +124,7 @@ namespace UBLOX
         //bool setI2COutput(byte comSettings, ushort maxWait = 250);              //Configure I2C port to output UBX, NMEA, RTCM3 or a combination thereof
         Task<bool> setUART1Output(byte comSettings, ushort maxWait = Constants.DefaultMaxWait); //Configure UART1 port to output UBX, NMEA, RTCM3 or a combination thereof
         Task<bool> setUART2Output(byte comSettings, ushort maxWait = Constants.DefaultMaxWait); //Configure UART2 port to output UBX, NMEA, RTCM3 or a combination thereof
-        Task<bool> setUSBOutput(byte comSettings, ushort maxWait = 250);              //Configure USB port to output UBX, NMEA, RTCM3 or a combination thereof
+        Task<bool> SetUSBOutputAsync(byte comSettings, ushort maxWait = 250);              //Configure USB port to output UBX, NMEA, RTCM3 or a combination thereof
         Task<bool> setSPIOutput(byte comSettings, ushort maxWait = 250);              //Configure SPI port to output UBX, NMEA, RTCM3 or a combination thereof
 
         //Functions to turn on/off message types for a given port ID (see COM_PORT_I2C, etc above)
@@ -174,23 +174,23 @@ namespace UBLOX
 
         Task<uint> getPositionAccuracy(ushort maxWait = 1100); //Returns the 3D accuracy of the current high-precision fix, in mm. Supported on NEO-M8P, ZED-F9P,
 
-        Task<byte> getProtocolVersionHigh(ushort maxWait = 500); //Returns the PROTVER XX.00 from UBX-MON-VER register
-        Task<byte> getProtocolVersionLow(ushort maxWait = 500);  //Returns the PROTVER 00.XX from UBX-MON-VER register
-        Task<bool> getProtocolVersion(ushort maxWait = 500);     //Queries module, loads low/high bytes
+        Task<byte> GetProtocolVersionHigh(ushort maxWait = 500); //Returns the PROTVER XX.00 from UBX-MON-VER register
+        Task<byte> GetProtocolVersionLow(ushort maxWait = 500);  //Returns the PROTVER 00.XX from UBX-MON-VER register
+        Task<bool> GetProtocolVersion(ushort maxWait = 500);     //Queries module, loads low/high bytes
 
-        Task<bool> getRELPOSNED(ushort maxWait = 1100); //Get Relative Positioning Information of the NED frame
+        Task<bool> GetRELPOSNED(ushort maxWait = 1100); //Get Relative Positioning Information of the NED frame
 
-        void enableDebugging(SerialPort debugPort, bool printLimitedDebug = false); //Given a port to print to, enable debug messages. Default to all, not limited.
-        void disableDebugging();                                                         //Turn off debug statements
-        void debugPrint(string message);                                                      //Safely print debug statements
-        void debugPrintln(string message);                                                    //Safely print debug statements
+        void EnableDebugging(SerialPort debugPort, bool printLimitedDebug = false); //Given a port to print to, enable debug messages. Default to all, not limited.
+        void DisableDebugging();                                                         //Turn off debug statements
+        void DebugPrint(string message);                                                      //Safely print debug statements
+        void DebugPrintln(string message);                                                    //Safely print debug statements
         //const char statusString(sfe_ublox_status_e stat);                                   //Pretty print the return value
 
         //Support for geofences
-        Task<bool> addGeofence(int latitude, int longitude, uint radius, byte confidence = 0, byte pinPolarity = 0, byte pin = 0, ushort maxWait = 1100); // Add a new geofence
-        Task<bool> clearGeofences(ushort maxWait = 1100);                                                                                                             //Clears all geofences
-        Task<bool> getGeofenceState(geofenceState currentGeofenceState, ushort maxWait = 1100);                                                                      //Returns the combined geofence state
-        Task<bool> clearAntPIO(ushort maxWait = 1100);                                                                                                                //Clears the antenna control pin settings to release the PIOs
+        Task<bool> AddGeofence(int latitude, int longitude, uint radius, byte confidence = 0, byte pinPolarity = 0, byte pin = 0, ushort maxWait = 1100); // Add a new geofence
+        Task<bool> ClearGeofences(ushort maxWait = 1100);                                                                                                             //Clears all geofences
+        Task<bool> GetGeofenceState(geofenceState currentGeofenceState, ushort maxWait = 1100);                                                                      //Returns the combined geofence state
+        Task<bool> ClearAntPIO(ushort maxWait = 1100);                                                                                                                //Clears the antenna control pin settings to release the PIOs
         //geofenceParams currentGeofenceParams;                                                                                                                        // Global to store the geofence parameters
 
         Task<bool> powerSaveMode(bool power_save = true, ushort maxWait = 1100);
