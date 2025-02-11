@@ -1,15 +1,14 @@
 using Serilog;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Zedf9p.DTO;
 using Zedf9p.Enums;
 using Zedf9p.Exceptions;
 using Zedf9p.Models;
@@ -134,10 +133,10 @@ namespace Zedf9p.F9p
 
             _logger.Debug($"Operating mode: {_driverOperationMode}");
 
-            if (_driverOperationMode == OperationMode.Server)
+            if (_driverOperationMode == OperationMode.Station)
             {
                 //start NTRIP server (base station)
-                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripStation, _cancellationTokenSource.Token);
             }
             else if (_driverOperationMode == OperationMode.Client)
             {
@@ -146,7 +145,7 @@ namespace Zedf9p.F9p
             }
 
             // Start monitoring in a separate task
-            _ = MaintainRunningThreads(cancellationToken);
+            //_ = MaintainRunningThreads(cancellationToken);
         }
 
         async Task MaintainRunningThreads(CancellationToken cancellationToken)
@@ -172,50 +171,59 @@ namespace Zedf9p.F9p
             _errorFlags.ClearErrors();
 
             //Running server operations
-            if (_driverOperationMode == OperationMode.Server)
+            if (_driverOperationMode == OperationMode.Station)
             {
-                //ATTACH NMEA HANDLER
+                _logger.Debug("Server operation start-up...");
+
+                // ATTACH NMEA HANDLER
                 //_myGPS.attachNMEAHandler(processNmea_Server);
 
-                //ATTACH RTCM HANDLER            
+                // ATTACH RTCM HANDLER            
                 //_myGPS.attachRTCMHandler(processRtcm_Server);
 
-                if (await _ublox.GetProtocolVersion()) _logger.Information("Ublox Protocol Version: " + await _ublox.GetProtocolVersionHigh() + "." + await _ublox.GetProtocolVersionLow());
+                if (await _ublox.GetProtocolVersion())
+                {
+                    _logger.Information($"Ublox Protocol Version: {await _ublox.GetProtocolVersionHigh()}.{await _ublox.GetProtocolVersionLow()}");
+                }
 
-                //var runThreadCancellationToken = RunThreads.Peek().tokenSource.Token;
+                // Request receiver mode every 3 seconds
+                using var timer = new System.Timers.Timer(3000)
+                {
+                    AutoReset = true
+                };
 
-                //Request receiver mode every 3 seconds
-                var timer = new System.Timers.Timer(3000);
-                timer.AutoReset = true; // the key is here so it repeats
                 timer.Elapsed += async (sender, e) =>
                 {
-                    //_logger.Information("Timer run in thread " + Thread.CurrentThread.ManagedThreadId);
+                    //_logger.Information($"Timer run in thread {Thread.CurrentThread.ManagedThreadId}");
 
-                    //Get receiver mode
-                    //var tmode3 = await _myGPS.getTmode3();
-                    //if (tmode3 != null)
-                    //{
-                    //    _logger.Information(tmode3.getMode());
-                    //    _socketCommunications.SendSyncData("RECEIVER_MODE:" + tmode3.getMode());
-                    //}
+                    // Get receiver mode
+                    // var tmode3 = await _myGPS.getTmode3();
+                    // if (tmode3 != null)
+                    // {
+                    //     _logger.Information(tmode3.getMode());
+                    //     _socketCommunications.SendSyncData($"RECEIVER_MODE:{tmode3.getMode()}");
+                    // }
                 };
                 timer.Start();
 
-                //Receive rtcm updates and send them to proper channels
-                while (_ublox != null)
+                try
                 {
-                    //if base station configures successfully start pulling data from it
-                    await _ublox.CheckUblox(); //See if new data is available. Process bytes as they come in.
-
-                    Thread.Sleep(10);
-
-                    if (_cancellationTokenSource.Token.IsCancellationRequested)
+                    // Receive RTCM updates and send them to proper channels
+                    while (_ublox != null && !_cancellationTokenSource.Token.IsCancellationRequested)
                     {
-                        _logger.Information("Run thread " + Thread.CurrentThread.ManagedThreadId + " exiting...");
-                        timer.Stop();
-                        timer.Dispose();
-                        break;
+                        // If base station configures successfully, start pulling data from it
+                        await _ublox.CheckUblox(); // See if new data is available. Process bytes as they come in.
+                        await Task.Delay(10, _cancellationTokenSource.Token);
                     }
+                }
+                catch (TaskCanceledException)
+                {
+                    _logger.Information($"Run thread {Environment.CurrentManagedThreadId} was cancelled.");
+                }
+                finally
+                {
+                    timer.Stop();
+                    _logger.Information($"Run thread {Environment.CurrentManagedThreadId} exiting...");
                 }
             }
             // Running client operations
@@ -249,7 +257,7 @@ namespace Zedf9p.F9p
                             {
                                 _logger.Information("Sending RTCM info to F9p module...");
 
-                                _ublox.send(_ntripInBuffer, ntripRcvLen);
+                                _ublox.Send(_ntripInBuffer, ntripRcvLen);
 
                                 lastRtcmDataReceived = Time.millis();
                             }
@@ -275,7 +283,7 @@ namespace Zedf9p.F9p
                 {
                     await SendPositionData(["lat", "lon", "alt", "acc", "head"]);
 
-                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
+                    await Task.Delay(1100 / CLIENT_NAV_FREQUENCY, _cancellationTokenSource.Token);
                 }
 
                 _logger.Information("Driver Exited...");
@@ -288,7 +296,7 @@ namespace Zedf9p.F9p
                 {
                     await SendPositionData(["lat", "lon", "alt", "acc", "head"]);
 
-                    Thread.Sleep(1100 / CLIENT_NAV_FREQUENCY);
+                    await Task.Delay(1100 / CLIENT_NAV_FREQUENCY);
                 }
             }
         }
@@ -299,20 +307,16 @@ namespace Zedf9p.F9p
         /// </summary>
         public async Task SendPositionData(string[] dataPoints)
         {
-            //GET HIGH RESOLUTION DATA
-            double latitude = dataPoints.Contains("lat") ? await _ublox.getHighResLatitude() / 10000000D : 0;
-            //int latitudeHp = await _myGps.getHighResLatitudeHp();
-            double longitude = dataPoints.Contains("lon") ? await _ublox.getHighResLongitude() / 10000000D : 0;
-            int altitude = dataPoints.Contains("alt") ? await _ublox.getAltitude() / 1000 : 0;
-            uint accuracy = dataPoints.Contains("acc") ? await _ublox.getPositionAccuracy() : 0;
-            double heading = dataPoints.Contains("head") ? await _ublox.getHeading() / 100000D : 0;
+            var syncData = new SyncData
+            {
+                Latitude = dataPoints.Contains("lat") ? await _ublox.getHighResLatitude() / 10000000D : 0,
+                Longitude = dataPoints.Contains("lon") ? await _ublox.getHighResLongitude() / 10000000D : 0,
+                Altitude = dataPoints.Contains("alt") ? await _ublox.getAltitude() / 1000 : 0,
+                Accuracy = dataPoints.Contains("acc") ? await _ublox.getPositionAccuracy() : 0,
+                Heading = dataPoints.Contains("head") ? await _ublox.getHeading() / 100000D : 0
+            };
 
-
-            if (dataPoints.Contains("lat")) _socketCommunications.SendSyncData("LATITUDE:" + latitude);
-            if (dataPoints.Contains("lon")) _socketCommunications.SendSyncData("LONGITUDE:" + longitude);
-            if (dataPoints.Contains("alt")) _socketCommunications.SendSyncData("ALTITUDE:" + altitude);
-            if (dataPoints.Contains("acc")) _socketCommunications.SendSyncData("ACCURACY:" + accuracy);
-            if (dataPoints.Contains("head")) _socketCommunications.SendSyncData("HEADING:" + heading);
+            _socketCommunications.SendSyncData(syncData);
         }
 
         /// <summary>
@@ -320,8 +324,14 @@ namespace Zedf9p.F9p
         /// </summary>
         void SendErrors(ErrorFlags errorFlags)
         {
-            if (_socketCommunications.IsSyncDataSocketConnected()) _socketCommunications.SendSyncData("ERRORS:" + JsonSerializer.Serialize(errorFlags));
-            else _logger.Information("Cannot send error output, sync socket is closed...");
+            if (_socketCommunications.IsSyncDataSocketConnected())
+            {
+                _socketCommunications.SendSyncData(new SyncData() { Errors = errorFlags });
+            }
+            else
+            {
+                _logger.Information("Cannot send error output, sync socket is closed...");
+            }
         }
 
         /// <summary>
@@ -411,10 +421,10 @@ namespace Zedf9p.F9p
         }
 
         /// <summary>
-        /// Configure f9p module as ntrip server (will be sending out RTCM data to ntrip caster)
+        /// Configure f9p module as ntrip client (will be sending out RTCM data to ntrip caster)
         /// </summary>
         /// <returns></returns>
-        async Task ConfigureGpsAsNtripServer()
+        async Task ConfigureGpsAsNtripStation()
         {
             _logger.Information("Create serial port connection for f9p module...");
             _serialPort = await _serialPortHandler.OpenPortAsync(_portName, TimeSpan.FromSeconds(5));
@@ -441,23 +451,26 @@ namespace Zedf9p.F9p
                 if (!NTRIP_SERVER_SIMULATION)
                 {
                     // Send credentials to ntrip caster
-                    string ntripWelcomeMessage = "SOURCE " + _ntripPassword + " /" + _ntripMountpoint + "\r\n";
-                    ntripWelcomeMessage += string.Format("Source-Agent: %s/%s\r\n\r\n", "NTRIP NtripServerPOSIX", "$Revision: 9109 $");
+                    string ntripWelcomeMessage = $"SOURCE {_ntripPassword} /{_ntripMountpoint}\r\n" +
+                                                 $"Source-Agent: NTRIP NtripServerPOSIX/Revision: 9109\r\n\r\n";
 
                     // Send auth request
+                    _logger.Debug("Sending NTRIP welcome message...");
                     _ntripCasterSocket.Send(Encoding.ASCII.GetBytes(ntripWelcomeMessage));
 
                     // Receive respone with ICY 200 OK or ERROR - Bad Password
                     var rcvLen = _ntripCasterSocket.Receive(_ntripInBuffer);
                     var ntripResponseMessage = Encoding.ASCII.GetString(_ntripInBuffer, 0, rcvLen); //take first 30 bytes from response 
 
+                    _logger.Debug($"NTRIP Response: {ntripResponseMessage}");
+
                     if (ntripResponseMessage.Equals("ICY 200 OK\r\n"))
                     {
-                        _logger.Information("Authentication passed!");
+                        _logger.Information("NTRIP Authentication passed!");
                     }
                     else
                     {
-                        _logger.Information("Authentiction error: " + ntripResponseMessage);
+                        _logger.Error("NTRIP Authentiction error: " + ntripResponseMessage);
                         throw new Exception("NTRIP Authentication error");
                     }
                 }
@@ -503,7 +516,7 @@ namespace Zedf9p.F9p
         //handler for NMEA data coming from the module when creating client (-client)
         async Task processNmea_Client(char incoming)
         {
-            processNmea_Server(incoming);
+            processNmea_Station(incoming);
         }
 
         /// <summary>
@@ -511,7 +524,7 @@ namespace Zedf9p.F9p
         /// </summary>
         /// <param name="incoming">Incoming byte</param>
         /// <returns></returns>
-        async Task processNmea_Server(char incoming)
+        async Task processNmea_Station(char incoming)
         {
             _nmeaOutBuffer += incoming;
 
@@ -528,15 +541,18 @@ namespace Zedf9p.F9p
         }
 
         /// <summary>
-        /// Handler for RTCM data coming from the module when creating server (-server)
+        /// Handler for RTCM data coming from the module when creating station (-server)
         /// </summary>
         /// <param name="incoming">Incoming byte</param>
         /// <returns></returns>
-        async Task ProcessRtcm_Server(byte incoming)
+        async Task ProcessRtcm_Station(byte incoming)
         {
 
-            //send rtcm info thru socket to the UI http server app
-            _socketCommunications.SendRtcmData(incoming);
+            // Send rtcm info thru socket to the UI http server app if needed
+            if (_socketCommunications.IsRtcmDataSocketConnected())
+            {
+                _socketCommunications.SendRtcmData(incoming);
+            }
 
             //push RTCM bute into the receive buffer until it reaches maximum defined size
             _ntripOutBuffer[_rtcmFrame++] = incoming;
@@ -550,7 +566,7 @@ namespace Zedf9p.F9p
                 {
                     if (Time.millis() > _nextNtripStatusSendTime)
                     {
-                        _socketCommunications.SendSyncData("NTRIP_SENT:");
+                        //_socketCommunications.SendSyncData("NTRIP_SENT");
                         _nextNtripStatusSendTime = Time.millis() + 1000;
                     }
                     _logger.Information("Sending RTCM to NTRIP Server");
@@ -565,7 +581,7 @@ namespace Zedf9p.F9p
                     //Do not send this more than once a second to sync
                     if (Time.millis() > _nextNtripStatusSendTime)
                     {
-                        _socketCommunications.SendSyncData("NTRIP_SENT:");
+                        //_socketCommunications.SendSyncData("NTRIP_SENT:");
                         _nextNtripStatusSendTime = Time.millis() + 1000;
                     }
 
@@ -646,7 +662,7 @@ namespace Zedf9p.F9p
                 _cancellationTokenSource = new CancellationTokenSource();
 
                 //enable receiver with new settings
-                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripStation, _cancellationTokenSource.Token);
 
             }
             else if (SyncIncomingCommandType.RESTART_FIXED == command.Type)
@@ -673,7 +689,7 @@ namespace Zedf9p.F9p
                 _cancellationTokenSource = new CancellationTokenSource();
 
                 //enable receiver with new settings
-                _mainRunningThread = Task.Run(ConfigureGpsAsNtripServer, _cancellationTokenSource.Token);
+                _mainRunningThread = Task.Run(ConfigureGpsAsNtripStation, _cancellationTokenSource.Token);
 
             }
         }
@@ -691,18 +707,22 @@ namespace Zedf9p.F9p
             _logger.Information("Enable Survey Mode, minimum " + rtcmSurveyTime + "sec and minimum accuracy " + rtcmAccuracy + " meters");
 
             var moduleResponse = await _ublox.enableSurveyMode((ushort)rtcmSurveyTime, rtcmAccuracy);
+            if (!moduleResponse) throw new Exception("710 Unable to properly configure module");
 
-            if (!moduleResponse) throw new Exception("Unable to properly configure module");
-
-            await disableRtcmMessagesOnUSB();
-            //_myGPS.attachRTCMHandler(null);
+            await DisableRtcmMessagesOnUSB();
+            _ublox.AttachRTCMHandler(null);
 
             //Get receiver mode
             var surveyMode = await _ublox.getTmode3();
             _logger.Information("Accuracy: " + surveyMode.GetAccuracyLimit() + "m");
-            _socketCommunications.SendSyncData($"SET_ACCURACY: {surveyMode.GetAccuracyLimit()}");
+            //_socketCommunications.SendSyncData($"SET_ACCURACY: {surveyMode.GetAccuracyLimit()}");
             _logger.Information("Mode: " + surveyMode.GetMode().ToString());
-            _socketCommunications.SendSyncData($"RECEIVER_MODE: {surveyMode.GetMode()}");
+            //_socketCommunications.SendSyncData($"RECEIVER_MODE: {surveyMode.GetMode()}");
+            _socketCommunications.SendSyncData(new SyncData()
+            {
+                Accuracy = surveyMode.GetAccuracyLimit(),
+                ReceiverMode = surveyMode.GetMode(),
+            });
 
             _logger.Information("Start requestiong survey status...");
 
@@ -726,9 +746,15 @@ namespace Zedf9p.F9p
                 {
                     //send data back to UI
                     await SendPositionData(["lat", "lon", "alt"]); //add regular data
-                    _socketCommunications.SendSyncData("ACCURACY:" + _ublox.svin.meanAccuracy.ToString());
-                    _socketCommunications.SendSyncData("SURVEY_TIME:" + _ublox.svin.observationTime.ToString());
-                    _socketCommunications.SendSyncData("SURVEY_VALID:" + _ublox.svin.valid.ToString());
+                    _socketCommunications.SendSyncData(new SyncData()
+                    {
+                        Accuracy = _ublox.svin.meanAccuracy,
+                        SurveyTime = _ublox.svin.observationTime,
+                        IsSurveyValid = _ublox.svin.valid,
+                    });
+                    //_socketCommunications.SendSyncData("ACCURACY:" + _ublox.svin.meanAccuracy.ToString());
+                    //_socketCommunications.SendSyncData("SURVEY_TIME:" + _ublox.svin.observationTime.ToString());
+                    //_socketCommunications.SendSyncData("SURVEY_VALID:" + _ublox.svin.valid.ToString());
 
 
                     // Show output in a console
@@ -754,8 +780,8 @@ namespace Zedf9p.F9p
 
             _logger.Information("Base survey complete! RTCM can now be broadcast");
 
-            await enableRtcmMessagesOnUSB();
-            //_myGPS.attachRTCMHandler(processRtcm_Server);
+            await EnableRtcmMessagesOnUSB();
+            _ublox.AttachRTCMHandler(ProcessRtcm_Station);
         }
 
         /// <summary>
@@ -770,14 +796,18 @@ namespace Zedf9p.F9p
 
             if (latitude == 0 || longitude == 0 || altitude == 0) throw new InvalidDataException("Latitude, longitude or altitude not provided, cannot continue...");
 
-            await disableRtcmMessagesOnUSB();
+            await DisableRtcmMessagesOnUSB();
 
             _logger.Information("Enable Fixed Mode, Lat: " + latitude + " Lon: " + longitude + " Alt: " + altitude);
 
             var moduleResponse = await _ublox.enableFixedMode(latitude, longitude, altitude); //Enable Survey in, 60 seconds, 5.0m  
 
             var surveyMode = await _ublox.getTmode3();
-            _socketCommunications.SendSyncData("RECEIVER_MODE:" + surveyMode.GetMode());
+            _socketCommunications.SendSyncData(new SyncData()
+            {
+                ReceiverMode = surveyMode.GetMode()
+            });
+            ///_socketCommunications.SendSyncData("RECEIVER_MODE:" + surveyMode.GetMode());
 
             if (!moduleResponse) throw new Exception("Unable to properly configure module");
 
@@ -785,10 +815,10 @@ namespace Zedf9p.F9p
 
             _logger.Information("Base setting complete! RTCM can now be broadcast");
 
-            await enableRtcmMessagesOnUSB();
+            await EnableRtcmMessagesOnUSB();
         }
 
-        async Task enableRtcmMessagesOnUSB()
+        async Task EnableRtcmMessagesOnUSB()
         {
 
             _logger.Information("Enable RTCM Messaging on USB");
@@ -801,11 +831,9 @@ namespace Zedf9p.F9p
             moduleResponse &= await _ublox.enableRTCMmessage(UBLOX.Constants.UBX_RTCM_1230, UBLOX.Constants.COM_PORT_USB, 10);
 
             if (!moduleResponse) throw new Exception("Unable to properly configure module");
-
-            _ublox.attachRTCMHandler(ProcessRtcm_Server);
         }
 
-        async Task disableRtcmMessagesOnUSB()
+        async Task DisableRtcmMessagesOnUSB()
         {
 
             _logger.Information("Disable RTCM Messaging on USB");
@@ -817,9 +845,7 @@ namespace Zedf9p.F9p
             moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1124, UBLOX.Constants.COM_PORT_USB);
             moduleResponse &= await _ublox.disableRTCMmessage(UBLOX.Constants.UBX_RTCM_1230, UBLOX.Constants.COM_PORT_USB);
 
-            if (!moduleResponse) throw new Exception("Unable to properly configure module");
-
-            _ublox.attachRTCMHandler(null);
+            if (!moduleResponse) throw new Exception("833 Unable to properly configure module");
         }
     }
 }

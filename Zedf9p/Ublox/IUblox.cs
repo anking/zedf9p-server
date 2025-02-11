@@ -31,7 +31,7 @@ namespace UBLOX
         //bool checkUbloxI2C(ubxPacket incomingUBX, byte requestedClass, byte requestedID);    //Method for I2C polling of data, passing any new bytes to process()
         Task<bool> checkUbloxSerial(ubxPacket incomingUBX, byte requestedClass, byte requestedID); //Method for serial polling of data, passing any new bytes to process()
 
-        Task process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID);    //Processes NMEA and UBX binary sentences one byte at a time
+        Task Process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID);    //Processes NMEA and UBX binary sentences one byte at a time
         void processUBX(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID); //Given a character, file it away into the uxb packet structure
         void processRTCMframe(byte incoming);                                                                //Monitor the incoming bytes for start and length bytes
         void processRTCM(byte incoming); //__attribute__((weak));                                               //Given rtcm byte, do something with it. User can overwrite if desired to pipe bytes to radio, internet, etc.

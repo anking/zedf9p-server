@@ -1,6 +1,8 @@
-﻿using Serilog;
+﻿using Newtonsoft.Json;
+using Serilog;
 using System;
 using System.Net.Sockets;
+using Zedf9p.DTO;
 
 namespace Zedf9p.Sockets
 {
@@ -18,9 +20,9 @@ namespace Zedf9p.Sockets
         // Constructor to accept socket paths
         public SocketCommunications(string nmeaSocketPath, string rtcmSocketPath, string syncSocketPath, ILogger logger)
         {
-            NmeaDataSocketLocation = nmeaSocketPath ?? throw new ArgumentNullException(nameof(nmeaSocketPath));
-            RtcmDataSocketLocation = rtcmSocketPath ?? throw new ArgumentNullException(nameof(rtcmSocketPath));
-            SyncDataSocketLocation = syncSocketPath ?? throw new ArgumentNullException(nameof(syncSocketPath));
+            NmeaDataSocketLocation = nmeaSocketPath;
+            RtcmDataSocketLocation = rtcmSocketPath;
+            SyncDataSocketLocation = syncSocketPath;
             _logger = logger;
 
             _logger.Information($"Socket paths set: NMEA: {NmeaDataSocketLocation}, RTCM: {RtcmDataSocketLocation}, Sync: {SyncDataSocketLocation}");
@@ -34,14 +36,33 @@ namespace Zedf9p.Sockets
                 _logger.Information("Connecting to interprocess sockets...");
 
                 // Client socket for HTTP server running on Node
-                _syncDataSocket = new AsyncSocket(SyncDataSocketLocation, _logger).Connect();
-                _nmeaDataSocket = new AsyncSocket(NmeaDataSocketLocation, _logger).Connect();
-                _rtcmDataSocket = new AsyncSocket(RtcmDataSocketLocation, _logger).Connect();
+                TryConnectSocket(SyncDataSocketLocation, ref _syncDataSocket, "Sync");
+                TryConnectSocket(NmeaDataSocketLocation, ref _nmeaDataSocket, "NMEA");
+                TryConnectSocket(RtcmDataSocketLocation, ref _rtcmDataSocket, "RTCM");
             }
             catch (SocketException e)
             {
                 // Unable to connect to the socket, spit out error in a console
                 _logger.Error("Socket connection error: " + e.Message);
+            }
+        }
+
+        private void TryConnectSocket(string socketPath, ref AsyncSocket socket, string socketName)
+        {
+            if (string.IsNullOrWhiteSpace(socketPath))
+            {
+                _logger.Warning($"{socketName} socket is disabled (no path provided).");
+                return;
+            }
+
+            try
+            {
+                socket = new AsyncSocket(socketPath, _logger).Connect();
+                _logger.Information($"{socketName} socket connected successfully.");
+            }
+            catch (SocketException e)
+            {
+                _logger.Error($"Failed to connect {socketName} socket: {e.Message}");
             }
         }
 
@@ -71,7 +92,13 @@ namespace Zedf9p.Sockets
             _syncDataSocket?.Disconnect();
         }
 
-        public void SendSyncData(string data) => SendData(_syncDataSocket, "Sync", data);
+        public void SendSyncData(SyncData syncData)
+        {
+            string jsonData = JsonConvert.SerializeObject(syncData) + "\n"; // Append newline as separator
+            SendSyncData(jsonData);
+        }
+
+        private void SendSyncData(string data) => SendData(_syncDataSocket, "Sync", data);
 
         public void SendNmeaData(string data) => SendData(_nmeaDataSocket, "NMEA", data);
 
@@ -116,7 +143,7 @@ namespace Zedf9p.Sockets
                     _logger.Warning($"Unsupported data type for {socketName} socket: {data.GetType()}");
                 }
 
-                _logger.Information($"{socketName} data sent successfully.");
+                _logger.Debug($"{socketName} data sent successfully.");
             }
             catch (Exception ex)
             {

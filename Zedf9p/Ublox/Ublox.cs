@@ -324,13 +324,9 @@ namespace UBLOX
         //Called regularly to check for available bytes on the user' specified port
         public async Task<bool> checkUbloxInternal(ubxPacket incomingUBX, byte requestedClass, byte requestedID)
         {
-            lock (serialReadLock) {
-                if (commType == CommTypes.COMM_TYPE_I2C)
-                    return false;
-                //return checkUbloxI2C(incomingUBX, requestedClass, requestedID);
-                else if (commType == CommTypes.COMM_TYPE_SERIAL)
-                    return checkUbloxSerial(incomingUBX, requestedClass, requestedID).GetAwaiter().GetResult();
-                return false;
+            lock (serialReadLock)
+            {
+                return checkUbloxSerial(incomingUBX, requestedClass, requestedID).GetAwaiter().GetResult();
             }
         }
 
@@ -345,7 +341,7 @@ namespace UBLOX
 
                 for (int i = 0; i < bytesReceivedLen; i++)
                 {
-                    await process(buff[i], incomingUBX, requestedClass, requestedID);
+                    await Process(buff[i], incomingUBX, requestedClass, requestedID);
                 }
             }
             return true;
@@ -353,7 +349,7 @@ namespace UBLOX
 
         //Processes NMEA and UBX binary sentences one byte at a time
         //Take a given byte and file it into the proper array
-        public async Task process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID)
+        public async Task Process(byte incoming, ubxPacket incomingUBX, byte requestedClass, byte requestedID)
         {
             if ((currentSentence == SentenceTypes.NONE) || (currentSentence == SentenceTypes.NMEA))
             {
@@ -592,14 +588,6 @@ namespace UBLOX
                 rtcmLen |= incoming; //Bits 0-7 of packet length
                 rtcmLen += 6;        //There are 6 additional bytes of what we presume is header, msgType, CRC, and stuff
             }
-            /*else if (rtcmFrameCounter == 3)
-            {
-              rtcmMsgType = incoming << 4; //Message Type, MS 4 bits
-            }
-            else if (rtcmFrameCounter == 4)
-            {
-              rtcmMsgType |= (incoming >> 4); //Message Type, bits 0-7
-            }*/
 
             rtcmFrameCounter++;
 
@@ -3640,13 +3628,13 @@ namespace UBLOX
         }
 
         //Attach handler function to NMEA bytes received
-        public void attachNMEAHandler(Func<char, Task> handler) => _nmeaHandler = handler;
+        public void AttachNMEAHandler(Func<char, Task> handler) => _nmeaHandler = handler;
 
         //Attach handler function to RTCM bytes received
-        public void attachRTCMHandler(Func<byte, Task> handler) => _rtcmHandler = handler;
+        public void AttachRTCMHandler(Func<byte, Task> handler) => _rtcmHandler = handler;
 
         //Write data into GPS device
-        public void send(byte[] data, int len)
+        public void Send(byte[] data, int len)
         {
             _serialPort.Write(data, 0, len);
         }

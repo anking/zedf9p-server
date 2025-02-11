@@ -27,13 +27,13 @@ public class InputParams
     [Option('o', "mode", Default = OperationMode.Idle, HelpText = "Operation mode for the driver (Idle/Server/Client).")]
     public OperationMode Mode { get; set; }
 
-    [Option('n', "nmea-socket", Required = true, HelpText = "Path to the NMEA socket.")]
+    [Option('n', "nmea-socket", HelpText = "Path to the NMEA socket.")]
     public string NmeaSocketPath { get; set; }
 
-    [Option('r', "rtcm-socket", Required = true, HelpText = "Path to the RTCM socket.")]
+    [Option('r', "rtcm-socket",  HelpText = "Path to the RTCM socket.")]
     public string RtcmSocketPath { get; set; }
 
-    [Option('x', "sync-socket", Required = true, HelpText = "Path to the sync socket.")]
+    [Option('x', "sync-socket", HelpText = "Path to the sync socket.")]
     public string SyncSocketPath { get; set; }
 
     [Option('d', "debug", Default = false, HelpText = "Enable debug mode.")]

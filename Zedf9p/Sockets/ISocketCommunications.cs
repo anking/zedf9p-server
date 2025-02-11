@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+﻿using Zedf9p.DTO;
 
 namespace Zedf9p.Sockets
 {
@@ -10,7 +10,9 @@ namespace Zedf9p.Sockets
         void CleanupSockets();
 
         // Other socket-related methods here, such as Send/Receive data
-        void SendSyncData(string data);
+        //void SendSyncData(string data);
+
+        void SendSyncData(SyncData syncData);
 
         void SendNmeaData(string data);
 
