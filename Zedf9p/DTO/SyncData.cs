@@ -1,3 +1,4 @@
+using System;
 using UBLOX.Enums;
 
 namespace Zedf9p.DTO
@@ -15,5 +16,6 @@ namespace Zedf9p.DTO
         public ReceiverModeEnum? ReceiverMode { get; set; }
         public ushort? SurveyTime { get; set; }
         public bool? IsSurveyValid { get; set; }
+        public DateTime? LastNtripSent { get; set; }
     }
 }

@@ -94,7 +94,11 @@ namespace Zedf9p.Sockets
 
         public void SendSyncData(SyncData syncData)
         {
-            string jsonData = JsonConvert.SerializeObject(syncData) + "\n"; // Append newline as separator
+            string jsonData = JsonConvert.SerializeObject(syncData, new JsonSerializerSettings
+            {
+                NullValueHandling = NullValueHandling.Ignore // Ignore null values
+            }) + "\n"; // Append newline as separator
+
             SendSyncData(jsonData);
         }
 

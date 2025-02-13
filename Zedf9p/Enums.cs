@@ -15,10 +15,4 @@
         Station = 1,        //if set to true program will configure gps as NTRIP server
         Client = 2         //if set to true program will configure gps as NTRIP client              
     }
-
-    public enum ReceiverMode
-    {
-        SurveyIn = 1,       //Survey Mode
-        Fixed = 2           //Fixed Mode         
-    }
 }

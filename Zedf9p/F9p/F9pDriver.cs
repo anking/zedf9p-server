@@ -8,6 +8,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using UBLOX.Enums;
 using Zedf9p.DTO;
 using Zedf9p.Enums;
 using Zedf9p.Exceptions;
@@ -75,7 +76,7 @@ namespace Zedf9p.F9p
         public OperationMode GetMode() => _driverOperationMode;
 
         //Current receiver mode (in server configuration)
-        ReceiverMode _receiverMode = ReceiverMode.SurveyIn;
+        ReceiverModeEnum _receiverMode = ReceiverModeEnum.SurveyIn;
 
         //Reference to currently running main thread
         Task _mainRunningThread;
@@ -439,8 +440,8 @@ namespace Zedf9p.F9p
             // Engage proper receiver mode
             switch (_receiverMode)
             {
-                case ReceiverMode.SurveyIn: await StartSurveyAsync(_surveyTime, _surveyAccuracy); break;
-                case ReceiverMode.Fixed: await StartFixedAsync(_latitude, _longitude, _altitude); break;
+                case ReceiverModeEnum.SurveyIn: await StartSurveyAsync(_surveyTime, _surveyAccuracy); break;
+                case ReceiverModeEnum.FixedMode: await StartFixedAsync(_latitude, _longitude, _altitude); break;
             }
 
             // Connect to to ntrip caster
@@ -581,7 +582,7 @@ namespace Zedf9p.F9p
                     //Do not send this more than once a second to sync
                     if (Time.millis() > _nextNtripStatusSendTime)
                     {
-                        //_socketCommunications.SendSyncData("NTRIP_SENT:");
+                        _socketCommunications.SendSyncData(new SyncData() { LastNtripSent = DateTime.Now });
                         _nextNtripStatusSendTime = Time.millis() + 1000;
                     }
 
@@ -656,7 +657,7 @@ namespace Zedf9p.F9p
                 _mainRunningThread.Wait();
 
                 //set current mode
-                _receiverMode = ReceiverMode.SurveyIn;
+                _receiverMode = ReceiverModeEnum.SurveyIn;
 
                 //Reset cancellation token
                 _cancellationTokenSource = new CancellationTokenSource();
@@ -683,7 +684,7 @@ namespace Zedf9p.F9p
                 _mainRunningThread.Wait();
 
                 //set current mode
-                _receiverMode = ReceiverMode.Fixed;
+                _receiverMode = ReceiverModeEnum.FixedMode;
 
                 //Reset cancellation token
                 _cancellationTokenSource = new CancellationTokenSource();
