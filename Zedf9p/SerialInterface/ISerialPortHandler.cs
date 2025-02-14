@@ -12,7 +12,13 @@ namespace Zedf9p.SerialInterface
         /// <param name="portName">The name of the serial port to open.</param>
         /// <param name="timeout">The timeout duration for opening the port.</param>
         /// <returns>A Task that represents the asynchronous operation. Returns the opened SerialPort if successful, otherwise null.</returns>
-        Task<SerialPort> OpenPortAsync(string portName, TimeSpan timeout);
+        Task<SerialPort> OpenPortAsync(
+            string portName,
+            TimeSpan timeout,
+            int baudRate = 115200,
+            Parity parity = Parity.None,
+            int dataBits = 8,
+            StopBits stopBits = StopBits.One);
 
         /// <summary>
         /// Closes the serial port if it's open.

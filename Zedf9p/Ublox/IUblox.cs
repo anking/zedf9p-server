@@ -133,7 +133,7 @@ namespace UBLOX
         Task<bool> disableMessage(byte msgClass, byte msgID, byte portID, ushort maxWait = Constants.DefaultMaxWait);
         Task<bool> enableNMEAMessage(byte msgID, byte portID, byte sendRate = 1, ushort maxWait = Constants.DefaultMaxWait);
         Task<bool> disableNMEAMessage(byte msgID, byte portID, ushort maxWait = Constants.DefaultMaxWait);
-        Task<bool> enableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = Constants.DefaultMaxWait); //Given a message number turns on a message ID for output over given PortID
+        Task<bool> EnableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = Constants.DefaultMaxWait); //Given a message number turns on a message ID for output over given PortID
         Task<bool> disableRTCMmessage(byte messageNumber, byte portID, ushort maxWait = Constants.DefaultMaxWait);                  //Turn off given RTCM message from a given port
 
         //General configuration (used only on protocol v27 and higher - ie, ZED-F9P)
@@ -164,11 +164,11 @@ namespace UBLOX
 
         //Functions used for RTK and base station setup
         //It is probably safe to assume that users of the RTK will be using I2C / Qwiic. So let's leave maxWait set to 250ms.
-        Task<SurveyMode> getTmode3(ushort maxWait = 250);                                                                 //Get the current TimeMode3 settings
-        Task<bool> setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250); //Control survey in mode
+        Task<SurveyMode> GetTmode3(ushort maxWait = 250);                                                                 //Get the current TimeMode3 settings
+        Task<bool> SetSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250); //Control survey in mode
         Task<bool> enableFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250);                   //Set fixed mode for GPS, will need lat, lng and altitude provided
-        Task<bool> enableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = 250);            //Begin Survey-In for NEO-M8P
-        Task<bool> disableSurveyMode(ushort maxWait = 250);                                                             //Stop Survey-In mode
+        Task<bool> EnableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = 250);            //Begin Survey-In for NEO-M8P
+        Task<bool> DisableSurveyMode(ushort maxWait = 250);                                                             //Stop Survey-In mode
 
         Task<bool> getSurveyStatus(ushort maxWait); //Reads survey in status and sets the global variables
 

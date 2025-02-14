@@ -1874,7 +1874,7 @@ namespace UBLOX
         }
 
         //Get the current TimeMode3 settings - these contain survey in statuses
-        public async Task<SurveyMode> getTmode3(ushort maxWait = 250)
+        public async Task<SurveyMode> GetTmode3(ushort maxWait = 250)
         {
             packetCfg.cls = Constants.UBX_CLASS_CFG;
             packetCfg.id = Constants.UBX_CFG_TMODE3;
@@ -1886,10 +1886,10 @@ namespace UBLOX
             : null;
         }
 
-        //Control Survey-In for NEO-M8P
-        public async Task<bool> setSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250)
+        // Control Survey-In for NEO-M8P
+        public async Task<bool> SetSurveyMode(byte mode, ushort observationTime, float requiredAccuracy, ushort maxWait = 250)
         {
-            if (await getTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
+            if (await GetTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
 
             packetCfg.cls = Constants.UBX_CLASS_CFG;
@@ -1924,7 +1924,7 @@ namespace UBLOX
         //Control Fixed Mode for ZED-F9p
         public async Task<bool> enableFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250)
         {
-            if (await getTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
+            if (await GetTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
 
             packetCfg.cls = Constants.UBX_CLASS_CFG;
@@ -1951,22 +1951,22 @@ namespace UBLOX
             return await sendCommand(packetCfg, maxWait) == SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
 
-        //Begin Survey-In for NEO-M8P
-        public async Task<bool> enableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = 250)
+        // Begin Survey-In for NEO-M8P
+        public async Task<bool> EnableSurveyMode(ushort observationTime, float requiredAccuracy, ushort maxWait = 250)
         {
-            return await setSurveyMode(Constants.SVIN_MODE_ENABLE, observationTime, requiredAccuracy, maxWait);
+            return await SetSurveyMode(Constants.SVIN_MODE_ENABLE, observationTime, requiredAccuracy, maxWait);
         }
 
-        //Stop Survey-In for NEO-M8P
-        public async Task<bool> disableSurveyMode(ushort maxWait = 250)
+        // Stop Survey-In for NEO-M8P
+        public async Task<bool> DisableSurveyMode(ushort maxWait = 250)
         {
-            return await setSurveyMode(Constants.SVIN_MODE_DISABLE, 0, 0, maxWait);
+            return await SetSurveyMode(Constants.SVIN_MODE_DISABLE, 0, 0, maxWait);
         }
 
-        //alias for disableSurveyMode
-        public async Task<bool> disableReceiver(ushort maxWait = 250)
+        // Alias for DisableSurveyMode
+        public async Task<bool> DisableReceiver(ushort maxWait = 250)
         {
-            return await disableSurveyMode();
+            return await DisableSurveyMode();
         }
 
         //Reads survey in status and sets the global variables
@@ -2283,7 +2283,7 @@ namespace UBLOX
         //1005, 1074, 1084, 1094, 1124, 1230
 
         //Much of this configuration is not documented and instead discerned from u-center binary console
-        public async Task<bool> enableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = Constants.DefaultMaxWait)
+        public async Task<bool> EnableRTCMmessage(byte messageNumber, byte portID, byte sendRate, ushort maxWait = Constants.DefaultMaxWait)
         {
             return await configureMessage(Constants.UBX_RTCM_MSB, messageNumber, portID, sendRate, maxWait);
         }
@@ -2291,7 +2291,7 @@ namespace UBLOX
         //Disable a given message on a given port by setting secondsBetweenMessages to zero
         public async Task<bool> disableRTCMmessage(byte messageNumber, byte portID, ushort maxWait = Constants.DefaultMaxWait)
         {
-            return await enableRTCMmessage(messageNumber, portID, 0, maxWait);
+            return await EnableRTCMmessage(messageNumber, portID, 0, maxWait);
         }
 
         //Add a new geofence using UBX-CFG-GEOFENCE

@@ -44,12 +44,13 @@ namespace Zedf9p
             try
             {
                 // Create the host and run the application
-                await CreateHostBuilder(args).RunConsoleAsync();
+                var host = CreateHostBuilder(args).Build();
+                await host.RunAsync();
             }
             catch (Exception e)
             {
                 // Handle any unhandled exceptions here
-                Console.WriteLine($"Error: {e.Message}");
+                Console.WriteLine($"Main Process Error: {e.Message}");
             }
         }
 
@@ -86,7 +87,8 @@ namespace Zedf9p
                 })
                 .ConfigureServices((hostContext, services) =>
                 {
-
+                    // Suppress default startup messages
+                    services.Configure<ConsoleLifetimeOptions>(options => options.SuppressStatusMessages = true);
 
                     // Register the parsed InputParams as a singleton
                     services.AddSingleton(inputParams);
