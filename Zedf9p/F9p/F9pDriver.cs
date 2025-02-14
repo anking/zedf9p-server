@@ -40,7 +40,7 @@ internal class F9pDriver : IF9pDriver
 
     //Gps Module Settings       
     private readonly string _serialPortName;                  //port the module is connected to (COM#) or ttyACM#
-    private SerialPort _serialPort;                     //instance of serial port for communication with module
+    private SerialPort _serialPort;                          //instance of serial port for communication with module
 
     // NTRIP Caster settings
     Socket _ntripCasterSocket;   //socket for connection with NTRIP caster
@@ -79,10 +79,10 @@ internal class F9pDriver : IF9pDriver
     ReceiverModeEnum _receiverMode = ReceiverModeEnum.SurveyIn;
 
     //Reference to currently running main thread
-    private Task _driverRunningThreadTask;
+    private Task _deviceOperationThreadTask;
 
     //Cancellation token for main running thread
-    CancellationTokenSource _cancellationTokenSourceForDriverThreadTask;
+    CancellationTokenSource _deviceOperationCts;
 
     //Indicator of next NTRIP packet send status (cannot send them to often)
     long _nextNtripStatusSendTime;
@@ -133,20 +133,20 @@ internal class F9pDriver : IF9pDriver
         _driverOperationMode = mode;
         _logger.Debug($"Operating mode: {_driverOperationMode}");
 
-        _cancellationTokenSourceForDriverThreadTask = new CancellationTokenSource();
-        var runTaskCancellationToken = _cancellationTokenSourceForDriverThreadTask.Token;
+        _deviceOperationCts = new CancellationTokenSource();
+        var deviceTaskCt = _deviceOperationCts.Token;
 
         try
         {
             if (_driverOperationMode == OperationMode.Station)
             {
                 // Start NTRIP server (base station)
-                _driverRunningThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(runTaskCancellationToken), runTaskCancellationToken);
+                _deviceOperationThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(deviceTaskCt), deviceTaskCt);
             }
             else if (_driverOperationMode == OperationMode.Client)
             {
                 // Start NTRIP client (rover)
-                _driverRunningThreadTask = Task.Run(() => ConfigureGpsAsNtripClientAsync(runTaskCancellationToken), runTaskCancellationToken);
+                _deviceOperationThreadTask = Task.Run(() => ConfigureGpsAsNtripClientAsync(deviceTaskCt), deviceTaskCt);
             }
 
             // Start monitoring Sync Channel in a separate tracked task
@@ -163,8 +163,10 @@ internal class F9pDriver : IF9pDriver
         finally
         {
             _logger.Debug("Cancelling Driver Thread Subtask");
-            _cancellationTokenSourceForDriverThreadTask?.Cancel();
+            _deviceOperationCts?.Cancel();
         }
+
+        _logger.Information("App shutdown");
     }
 
     private async Task MaintainRunningThreadsAsync(CancellationToken cancellationToken)
@@ -319,7 +321,7 @@ internal class F9pDriver : IF9pDriver
             {
                 await SendPositionDataAsync(["lat", "lon", "alt", "acc", "head"]);
 
-                await Task.Delay(1100 / CLIENT_NAV_FREQUENCY, _cancellationTokenSourceForDriverThreadTask.Token);
+                await Task.Delay(1100 / CLIENT_NAV_FREQUENCY, _deviceOperationCts.Token);
             }
 
             _logger.Information("Driver Exited...");
@@ -704,11 +706,11 @@ internal class F9pDriver : IF9pDriver
             StopCurrentDriverThread();          
 
             // Reset cancellation token
-            _cancellationTokenSourceForDriverThreadTask = new CancellationTokenSource();
+            _deviceOperationCts = new CancellationTokenSource();
 
             // Enable receiver with new settings
-            _driverRunningThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(_cancellationTokenSourceForDriverThreadTask.Token),
-                _cancellationTokenSourceForDriverThreadTask.Token);
+            _deviceOperationThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(_deviceOperationCts.Token),
+                _deviceOperationCts.Token);
 
         }
         else if (command.Type == SyncIncomingCommandType.RESTART_FIXED)
@@ -726,11 +728,11 @@ internal class F9pDriver : IF9pDriver
             StopCurrentDriverThread();
 
             // Reset cancellation token
-            _cancellationTokenSourceForDriverThreadTask = new CancellationTokenSource();
+            _deviceOperationCts = new CancellationTokenSource();
 
             // Enable receiver with new settings
-            _driverRunningThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(_cancellationTokenSourceForDriverThreadTask.Token),
-                _cancellationTokenSourceForDriverThreadTask.Token);
+            _deviceOperationThreadTask = Task.Run(() => ConfigureGpsAsNtripStationAsync(_deviceOperationCts.Token),
+                _deviceOperationCts.Token);
 
         }
     }
@@ -740,10 +742,10 @@ internal class F9pDriver : IF9pDriver
         try
         {
             // Stop main running thread
-            _cancellationTokenSourceForDriverThreadTask.Cancel();
+            _deviceOperationCts.Cancel();
 
             // Wait for running thread to stop
-            _driverRunningThreadTask.Wait();
+            _deviceOperationThreadTask.Wait();
         }
         catch (AggregateException ex)
         {
@@ -806,7 +808,7 @@ internal class F9pDriver : IF9pDriver
         // Wait for survey to complete
         while (_ublox.svin.valid == false)
         {
-            // Exit if cancellation requested
+            // Exit if cancellation requested before outputing new data
             cancellationToken.ThrowIfCancellationRequested();
 
             // Check sync data socket for updates
@@ -814,6 +816,9 @@ internal class F9pDriver : IF9pDriver
 
             // Query module for SVIN status with 2000ms timeout (req can take a long time)
             moduleResponse = await _ublox.getSurveyStatus(2000);
+
+            // Exit if cancellation requested before outputing new data
+            cancellationToken.ThrowIfCancellationRequested();
 
             // If module response if always true
             if (moduleResponse)
@@ -920,8 +925,7 @@ internal class F9pDriver : IF9pDriver
 
     private void CloseSerialPort(SerialPort serialPort)
     {
-        _logger.Information($"Closing Serial Port{serialPort.PortName}");
-        serialPort.Close();
+        _serialPortHandler.ClosePort(serialPort);
     }
 
     private async Task<SerialPort> OpenSerialPortAsync(

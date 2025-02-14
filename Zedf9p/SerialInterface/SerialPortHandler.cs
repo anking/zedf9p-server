@@ -66,5 +66,18 @@ namespace Zedf9p.SerialInterface
                 return null;
             }
         }
+
+        public void ClosePort(SerialPort serialPort)
+        {
+            if (serialPort == null || !IsPortOpen(serialPort)) return;
+
+            _logger.Information($"Closing Serial Port {serialPort.PortName}");
+            serialPort.Close();
+        }
+
+        public bool IsPortOpen(SerialPort serialPort)
+        {
+            return serialPort?.IsOpen ?? false;
+        }
     }
 }

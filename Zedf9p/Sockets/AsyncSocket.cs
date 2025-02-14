@@ -83,7 +83,7 @@ namespace Zedf9p.Sockets
                 _socket.Close();
                 _socket.Dispose();
 
-                _logger.Information("Socket successfully disconnected and disposed.");
+                _logger.Information($"Socket {_socketLocation} successfully disconnected and disposed.");
             }
             catch (Exception ex)
             {

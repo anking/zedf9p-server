@@ -117,12 +117,13 @@ namespace Zedf9p
         }
     }
 
-    public class App(IF9pDriver driver, InputParams inputParams, ISocketCommunications socketCommunications, ILogger logger) : BackgroundService
+    public class App(IF9pDriver driver, InputParams inputParams, ISocketCommunications socketCommunications, ILogger logger, IHostApplicationLifetime lifetime) : BackgroundService
     {
         private readonly IF9pDriver _driver = driver;
         private readonly ISocketCommunications _socketCommunications = socketCommunications;
         private readonly InputParams _inputParams = inputParams;
         private readonly ILogger _logger = logger;
+        private readonly IHostApplicationLifetime _lifetime = lifetime;
 
         protected override async Task ExecuteAsync(CancellationToken cancellationToken)
         {
@@ -147,14 +148,13 @@ namespace Zedf9p
             {
                 _logger.Error($"Application Exception: {e.Message}", e);
             }
-        }
-
-        public override async Task StopAsync(CancellationToken cancellationToken)
-        {
-            // Clean up resources before stopping
-            _logger.Information("Stopping F9P Driver...");
-            _driver.Cleanup();
-            await base.StopAsync(cancellationToken);
+            finally
+            {
+                // Clean up resources before stopping
+                _logger.Information("Stopping F9P Driver...");
+                _driver.Cleanup();
+                _lifetime.StopApplication();
+            }
         }
     }
 }

@@ -23,12 +23,12 @@ namespace Zedf9p.SerialInterface
         /// <summary>
         /// Closes the serial port if it's open.
         /// </summary>
-        //void ClosePort();
+        void ClosePort(SerialPort serialPort);
 
         /// <summary>
         /// Checks if the serial port is currently open.
         /// </summary>
         /// <returns>True if the serial port is open, otherwise false.</returns>
-        //bool IsPortOpen();
+        bool IsPortOpen(SerialPort serialPort);
     }
 }
