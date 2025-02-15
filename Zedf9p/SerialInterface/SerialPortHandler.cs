@@ -15,7 +15,13 @@ namespace Zedf9p.SerialInterface
         /// <param name="portName">The name of the serial port.</param>
         /// <param name="timeout">Timeout for opening the port.</param>
         /// <returns>Returns the opened SerialPort instance or null if failed.</returns>
-        public async Task<SerialPort> OpenPortAsync(string portName, TimeSpan timeout)
+        public async Task<SerialPort> OpenPortAsync(
+            string portName,
+            TimeSpan timeout,
+            int baudRate = 115200,
+            Parity parity = Parity.None,
+            int dataBits = 8,
+            StopBits stopBits = StopBits.One)
         {
             try
             {
@@ -59,6 +65,19 @@ namespace Zedf9p.SerialInterface
                 _logger.Error($"Exception occurred while trying to open port {portName}: {ex.Message}");
                 return null;
             }
+        }
+
+        public void ClosePort(SerialPort serialPort)
+        {
+            if (serialPort == null || !IsPortOpen(serialPort)) return;
+
+            _logger.Information($"Closing Serial Port {serialPort.PortName}");
+            serialPort.Close();
+        }
+
+        public bool IsPortOpen(SerialPort serialPort)
+        {
+            return serialPort?.IsOpen ?? false;
         }
     }
 }
