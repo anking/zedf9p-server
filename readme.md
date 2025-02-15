@@ -1,6 +1,6 @@
 # ZED-F9P GNSS Module Console Application
 
-This is a console application that connects to the u-blox [ZED-F9P Precision GNSS Module](./timages/IMG_20201119_194246.jpg) via a serial interface.
+This is a console application that connects to the u-blox [ZED-F9P Precision GNSS Module](./images/IMG_20201119_194246.jpg) via a serial interface.
 The application configures the module to operate as either an NTRIP Client or Station.
 
 ## Features
