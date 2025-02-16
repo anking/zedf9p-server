@@ -3,6 +3,7 @@ name: Build and Upload .NET Artifacts
 on:
   release:
     types: [created]
+  workflow_dispatch:  # This allows manual triggering
 
 jobs:
   build:
