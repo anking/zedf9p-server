@@ -14,10 +14,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
+    permissions:
+      contents: write
+    
     steps:
       # Step 1: Checkout the repository
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Get Latest Release Version by Tag
         id: release_version
@@ -79,13 +82,13 @@ jobs:
         run: |
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
-          echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm64-1.zip" >> $GITHUB_ENV
+          echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm64.zip" >> $GITHUB_ENV
 
       - name: Create ZIP for linux-arm
         run: |
           cd ./publish
           zip -r linux-arm.zip linux-arm
-          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm" >> $GITHUB_ENV
+          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm" >> $GITHUB_ENV
 
 
       # - name: Get the Release ID
@@ -124,17 +127,17 @@ jobs:
         with:
           upload_url: ${{ env.upload_url_linux-arm64 }}
           asset_path: ./publish/linux-arm64.zip
-          asset_name: linux-arm64-1.zip
+          asset_name: linux-arm64.zip
           asset_content_type: application/zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Upload linux-arm artifact
-      #   uses: actions/upload-release-asset@v1
-      #   with:
-      #     upload_url: ${{ env.upload_url_linux-arm }}
-      #     asset_path: ./publish/linux-arm.zip
-      #     asset_name: linux-arm.zip
-      #     asset_content_type: application/zip
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload linux-arm artifact
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ env.upload_url_linux-arm }}
+          asset_path: ./publish/linux-arm.zip
+          asset_name: linux-arm.zip
+          asset_content_type: application/zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
