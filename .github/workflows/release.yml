@@ -24,14 +24,20 @@ jobs:
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"  # Extract tag name from ref
           echo "Looking for release by tag: $TAG_NAME"
-          
+    
           # Use GitHub API to get the release info for the tag
           release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_tag }}")
-          
+    
           # Extract the release ID using jq
           release_id=$(echo "$release_info" | jq --raw-output .id)
-          
+    
+          # Check if release ID is empty (tag might be incorrect or not exist)
+          if [ -z "$release_id" ]; then
+            echo "Error: Release ID not found for tag $TAG_NAME. Please check the tag name."
+            exit 1  # Stop the workflow if release ID is not found
+          fi
+
           echo "Release ID: $release_id"
           echo "RELEASE_ID=$release_id" >> $GITHUB_ENV
 
@@ -50,10 +56,10 @@ jobs:
         run: |
           dotnet publish -c Release --self-contained -r linux-arm64 --output ./publish/linux-arm64
 
-      # # Step 5: Publish for linux-arm
-      # - name: Publish for linux-arm
-      #   run: |
-      #     dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
+      # Step 5: Publish for linux-arm
+      - name: Publish for linux-arm
+        run: |
+          dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
       # Step 5.5: Create release ID
       # - name: Get the Release ID
