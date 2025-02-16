@@ -79,6 +79,14 @@ jobs:
         run: |
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
+          echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm64.zip" >> $GITHUB_ENV
+
+      - name: Create ZIP for linux-arm
+        run: |
+          cd ./publish
+          zip -r linux-arm.zip linux-arm
+          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm.zip" >> $GITHUB_ENV
+
 
       # - name: Get the Release ID
       #   id: release
@@ -87,16 +95,13 @@ jobs:
       #     echo "Release ID: $release_id"
       #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
 
-      - name: Create ZIP for linux-arm
-        run: |
-          cd ./publish
-          zip -r linux-arm.zip linux-arm
 
-      - name: Set Release ID from input
-        run: |          
-          echo "Release Tag: ${{ github.event.inputs.release_tag }}"
-          echo "Release ID: ${{ env.RELEASE_ID }}"
-          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets" >> $GITHUB_ENV
+
+      # - name: Set Release ID from input
+      #   run: |          
+      #     echo "Release Tag: ${{ github.event.inputs.release_tag }}"
+      #     echo "Release ID: ${{ env.RELEASE_ID }}"
+      #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets" >> $GITHUB_ENV
 
       # - name: Check if it's a release event
       #   id: check_event
@@ -117,7 +122,7 @@ jobs:
       - name: Upload linux-arm64 artifact
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ env.upload_url }}
+          upload_url: ${{ env.upload_url_linux-arm64 }}
           asset_path: ./publish/linux-arm64.zip
           asset_name: linux-arm64.zip
           asset_content_type: application/zip
@@ -127,7 +132,7 @@ jobs:
       - name: Upload linux-arm artifact
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ github.event.release.upload_url }}
+          upload_url: ${{ env.upload_url_linux-arm }}
           asset_path: ./publish/linux-arm.zip
           asset_name: linux-arm.zip
           asset_content_type: application/zip
