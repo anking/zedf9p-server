@@ -19,6 +19,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
+      - name: Get Latest Release Version by Tag
+        id: release_version
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"  # Extract tag name from ref
+          echo "Looking for release by tag: $TAG_NAME"
+          
+          # Use GitHub API to get the release info for the tag
+          release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_id }}")
+          
+          # Extract the release version (tag name) using jq
+          release_version=$(echo "$release_info" | jq --raw-output .tag_name)
+          
+          echo "Release Version: $release_version"
+          echo "RELEASE_VERSION=$release_version" >> $GITHUB_ENV
+
       # Step 2: Set up .NET SDK
       - name: Set up .NET
         uses: actions/setup-dotnet@v2
