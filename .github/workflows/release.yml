@@ -22,6 +22,10 @@ jobs:
       - name: Get Latest Release Version by Tag
         id: release_version
         run: |
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            echo "No release Tag provided, aborting upload."
+            exit 1
+          fi
           echo "Looking for release by tag: ${{ github.event.inputs.release_tag }}"
     
           # Use GitHub API to get the release info for the tag
@@ -32,7 +36,7 @@ jobs:
           release_id=$(echo "$release_info" | jq --raw-output .id)
     
           # Check if release ID is empty (tag might be incorrect or not exist)
-          if [ -z "$release_id" ]; then
+          if [ "$release_id" == "null" ] || [ -z "$release_id" ]; then
             echo "Error: Release ID not found for tag $TAG_NAME. Please check the tag name."
             exit 1  # Stop the workflow if release ID is not found
           fi
@@ -89,11 +93,7 @@ jobs:
           zip -r linux-arm.zip linux-arm
 
       - name: Set Release ID from input
-        run: |
-          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
-            echo "No release Tag provided, aborting upload."
-            exit 1
-          fi
+        run: |          
           echo "Release Tag: ${{ github.event.inputs.release_tag }}"
           echo "Release ID: ${{ env.RELEASE_ID }}"
           echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=${asset_name}&label=${asset_label}" >> $GITHUB_ENV
