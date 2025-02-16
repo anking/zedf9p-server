@@ -50,6 +50,13 @@ jobs:
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
 
+      - name: Get the Release ID
+        id: release
+        run: |
+          release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
+          echo "Release ID: $release_id"
+          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+
       # - name: Create ZIP for linux-arm
       #   run: |
       #     cd ./publish
