@@ -128,7 +128,7 @@ jobs:
       - name: Check response
         run: |
             echo "Upload URL: ${{ env.upload_url_linux-arm64 }}"
-            curl -X POST -H "Authorization: Bearer $GITHUB_TOKEN" \
+            curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -F "file=@./publish/linux-arm64.zip" \
             "${{ env.upload_url_linux-arm64 }}"
 
