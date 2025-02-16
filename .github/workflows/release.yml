@@ -3,7 +3,7 @@ name: Build and Upload .NET Artifacts
 on:
   release:
     types: [created]
-  workflow_dispatch:  # This allows manual triggering
+  workflow_dispatch:
     inputs:
       release_tag:
         description: 'Enter the Release Tag (e.g., v1.0) from an existing release'
@@ -13,133 +13,104 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: write
-    
+
     steps:
+      # Step 1: Install jq (dependency for JSON processing)
       - name: Install jq
         run: |
           sudo apt-get update && sudo apt-get install -y jq
 
-      # Step 1: Checkout the repository
+      # Step 2: Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # Step 3: Debug release event information
       - name: Debug Release Information
         run: |
-          cat $GITHUB_EVENT_PATH  # Output event info for debugging
+          cat "$GITHUB_EVENT_PATH"  # Output event info for debugging
 
-      - name: Get Latest Release Id by Tag If Dispatched Manually
+      # Step 4: Determine Release ID when triggered via workflow_dispatch
+      - name: Get Release ID by Tag (workflow_dispatch)
         id: release_version
-        if: ${{ github.event_name == 'workflow_dispatch' }}  # Run only for manual dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           if [ -z "${{ github.event.inputs.release_tag }}" ]; then
-            echo "No release Tag provided, aborting upload."
+            echo "No release tag provided, aborting upload."
             exit 1
           fi
           echo "Looking for release by tag: ${{ github.event.inputs.release_tag }}"
-    
-          # Use GitHub API to get the release info for the tag
+
+          # Get the release info via GitHub API
           release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_tag }}")
-    
+
           # Extract the release ID using jq
           release_id=$(echo "$release_info" | jq --raw-output .id)
-    
-          # Check if release ID is empty (tag might be incorrect or not exist)
+
+          # Check if the release ID was found
           if [ "$release_id" == "null" ] || [ -z "$release_id" ]; then
-            echo "Error: Release ID not found for tag $TAG_NAME. Please check the tag name."
-            exit 1  # Stop the workflow if release ID is not found
+            echo "Error: Release ID not found for tag ${{ github.event.inputs.release_tag }}. Please check the tag name."
+            exit 1
           fi
 
           echo "Release ID: $release_id"
           echo "RELEASE_ID=$release_id" >> $GITHUB_ENV
 
-      # Step  Create release ID From reliase step
-      - name: Get the Release ID from release path
+      # Step 5: Determine Release ID when triggered via a release event
+      - name: Get Release ID from Release Event
         id: release
-        if: ${{ github.event_name == 'release' }}  # Run only if the event is a release event
+        if: ${{ github.event_name == 'release' }}
         run: |
-            # Use jq to extract the release ID from the event payload
-            RELEASE_ID=$(jq --raw-output '.release.id' "$GITHUB_EVENT_PATH")
-    
-            # Check if RELEASE_ID is empty or "null"
-            if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
-              echo "Error: Release ID not found. Please check the event payload."
-              exit 1
-            fi
-    
-            # Write the RELEASE_ID to the GitHub Actions environment
-            echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
-            echo "Environment variable RELEASE_ID is set to: $RELEASE_ID"
+          # Extract the release ID from the event payload
+          RELEASE_ID=$(jq --raw-output '.release.id' "$GITHUB_EVENT_PATH")
 
-      # Step 2: Set up .NET SDK
+          # Validate the extracted release ID
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Error: Release ID not found. Please check the event payload."
+            exit 1
+          fi
+
+          echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
+          echo "Environment variable RELEASE_ID is set to: $RELEASE_ID"
+
+      # Step 6: Set up the .NET SDK
       - name: Set up .NET
         uses: actions/setup-dotnet@v2
         with:
           dotnet-version: '8.x'
 
-      # Step 3: Restore dependencies
+      # Step 7: Restore dependencies
       - name: Restore dependencies
         run: dotnet restore
 
-      # Step 4: Publish for linux-arm64
+      # Step 8: Publish for linux-arm64
       - name: Publish for linux-arm64
         run: |
           dotnet publish -c Release --self-contained -r linux-arm64 --output ./publish/linux-arm64
 
-      # Step 5: Publish for linux-arm
+      # Step 9: Publish for linux-arm
       - name: Publish for linux-arm
         run: |
           dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
-      # Step 6: Create ZIP files for the published artifacts
+      # Step 10: Create ZIP for linux-arm64 artifacts
       - name: Create ZIP for linux-arm64
         run: |
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
           echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm64.zip" >> $GITHUB_ENV
 
+      # Step 11: Create ZIP for linux-arm artifacts
       - name: Create ZIP for linux-arm
         run: |
           cd ./publish
           zip -r linux-arm.zip linux-arm
-          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm" >> $GITHUB_ENV
+          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm.zip" >> $GITHUB_ENV
 
-
-      # - name: Get the Release ID
-      #   id: release
-      #   run: |
-      #     release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
-      #     echo "Release ID: $release_id"
-      #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
-
-
-
-      # - name: Set Release ID from input
-      #   run: |          
-      #     echo "Release Tag: ${{ github.event.inputs.release_tag }}"
-      #     echo "Release ID: ${{ env.RELEASE_ID }}"
-      #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets" >> $GITHUB_ENV
-
-      # - name: Check if it's a release event
-      #   id: check_event
-      #   run: |
-      #     if [ -f "$GITHUB_EVENT_PATH" ]; then
-      #       echo "Release event detected"
-      #       release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
-      #       echo "Release ID: $release_id"
-      #       echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
-      #     else
-      #       echo "Manual trigger detected. Please provide the release ID."
-      #       read -p "Enter the release ID: " release_id
-      #       echo "Release ID: $release_id"
-      #       echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
-      #     fi
-
-      # Step 7: Upload the artifacts to the release
-      # This step will fail with "Validation Failed" message if the assets already exist in a release
+      # Step 12: Upload the linux-arm64 artifact to the release
       - name: Upload linux-arm64 artifact
         uses: actions/upload-release-asset@v1.0.2
         with:
@@ -150,6 +121,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Step 13: Upload the linux-arm artifact to the release
       - name: Upload linux-arm artifact
         uses: actions/upload-release-asset@v1
         with:
