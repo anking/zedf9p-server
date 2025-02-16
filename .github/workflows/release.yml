@@ -4,6 +4,11 @@ on:
   release:
     types: [created]
   workflow_dispatch:  # This allows manual triggering
+    inputs:
+      release_id:
+        description: 'Enter the release ID from the [Releases Page](https://github.com/anking/zedf9p-server/releases)'
+        required: true
+        default: ''
 
 jobs:
   build:
@@ -62,20 +67,29 @@ jobs:
       #     cd ./publish
       #     zip -r linux-arm.zip linux-arm
 
-      - name: Check if it's a release event
-        id: check_event
+      - name: Set Release ID from input
         run: |
-          if [ -f "$GITHUB_EVENT_PATH" ]; then
-            echo "Release event detected"
-            release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
-            echo "Release ID: $release_id"
-            echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
-          else
-            echo "Manual trigger detected. Please provide the release ID."
-            read -p "Enter the release ID: " release_id
-            echo "Release ID: $release_id"
-            echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+          if [ -z "${{ github.event.inputs.release_id }}" ]; then
+            echo "No release ID provided, aborting upload."
+            exit 1
           fi
+          echo "Release ID: ${{ github.event.inputs.release_id }}"
+          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ github.event.inputs.release_id }}/assets{?name,label}" >> $GITHUB_ENV
+
+      # - name: Check if it's a release event
+      #   id: check_event
+      #   run: |
+      #     if [ -f "$GITHUB_EVENT_PATH" ]; then
+      #       echo "Release event detected"
+      #       release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
+      #       echo "Release ID: $release_id"
+      #       echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+      #     else
+      #       echo "Manual trigger detected. Please provide the release ID."
+      #       read -p "Enter the release ID: " release_id
+      #       echo "Release ID: $release_id"
+      #       echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+      #     fi
 
       # Step 7: Upload the artifacts to the release
       - name: Upload linux-arm64 artifact
