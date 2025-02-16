@@ -136,3 +136,5 @@ jobs:
           asset_path: ./publish/linux-arm.zip
           asset_name: linux-arm.zip
           asset_content_type: application/zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
