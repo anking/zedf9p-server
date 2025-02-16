@@ -79,13 +79,13 @@ jobs:
         run: |
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
-          echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm64.zip" >> $GITHUB_ENV
+          echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm64" >> $GITHUB_ENV
 
       - name: Create ZIP for linux-arm
         run: |
           cd ./publish
           zip -r linux-arm.zip linux-arm
-          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm.zip" >> $GITHUB_ENV
+          echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets&name=linux-arm" >> $GITHUB_ENV
 
 
       # - name: Get the Release ID
