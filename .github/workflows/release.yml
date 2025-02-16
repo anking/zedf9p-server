@@ -74,7 +74,7 @@ jobs:
             exit 1
           fi
           echo "Release ID: ${{ github.event.inputs.release_id }}"
-          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ github.event.inputs.release_id }}/assets?name=test&label=tl" >> $GITHUB_ENV
+          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ github.event.inputs.release_id }}/assets?name=linux-arm64.zip&label=tl" >> $GITHUB_ENV
 
       # - name: Check if it's a release event
       #   id: check_event
