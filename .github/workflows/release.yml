@@ -100,14 +100,14 @@ jobs:
       - name: Create ZIP for linux-arm64
         run: |
           cd ./publish
-          zip -r linux-arm64.zip linux-arm64
+          zip -rj linux-arm64.zip linux-arm64/*
           echo "upload_url_linux-arm64=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm64.zip" >> $GITHUB_ENV
 
       # Step 11: Create ZIP for linux-arm artifacts
       - name: Create ZIP for linux-arm
         run: |
           cd ./publish
-          zip -r linux-arm.zip linux-arm
+          zip -rj linux-arm.zip linux-arm/*
           echo "upload_url_linux-arm=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm.zip" >> $GITHUB_ENV
 
       # Step 12: Upload the linux-arm64 artifact to the release
