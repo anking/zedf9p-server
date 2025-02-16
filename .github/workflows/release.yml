@@ -6,7 +6,7 @@ on:
   workflow_dispatch:  # This allows manual triggering
     inputs:
       release_id:
-        description: 'Enter the release ID from the [Releases Page](https://github.com/anking/zedf9p-server/releases)'
+        description: 'Enter the release ID (e.g., v1.0) from an existing release'
         required: true
         default: ''
 
@@ -49,11 +49,11 @@ jobs:
       #   run: |
       #     cat $GITHUB_EVENT_PATH  # Output event info for debugging
 
-      # # Step 6: Create ZIP files for the published artifacts
-      # - name: Create ZIP for linux-arm64
-      #   run: |
-      #     cd ./publish
-      #     zip -r linux-arm64.zip linux-arm64
+      # Step 6: Create ZIP files for the published artifacts
+      - name: Create ZIP for linux-arm64
+        run: |
+          cd ./publish
+          zip -r linux-arm64.zip linux-arm64
 
       # - name: Get the Release ID
       #   id: release
