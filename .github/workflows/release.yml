@@ -29,11 +29,11 @@ jobs:
           release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_id }}")
           
-          # Extract the release version (tag name) using jq
-          release_version=$(echo "$release_info" | jq --raw-output .tag_name)
+          # Extract the release ID using jq
+          release_id=$(echo "$release_info" | jq --raw-output .id)
           
-          echo "Release Version: $release_version"
-          echo "RELEASE_VERSION=$release_version" >> $GITHUB_ENV
+          echo "Release ID: $release_id"
+          echo "RELEASE_ID=$release_id" >> $GITHUB_ENV
 
       # Step 2: Set up .NET SDK
       - name: Set up .NET
