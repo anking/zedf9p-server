@@ -53,8 +53,8 @@ jobs:
         id: release
         if: ${{ github.event_name == 'release' }}  # Run only if the event is a release event
         run: |
-            RELEASE_ID=$(grep -oP '"id":\s*\K\d+' $GITHUB_EVENT_PATH)
-            echo "RELEASE_ID=${RELEASE_ID}" >> $GITHUB_ENV
+            RELEASE_ID=$(grep -oP '"id":\s*\K\d+' "$GITHUB_EVENT_PATH" | head -n 1)
+            printf "RELEASE_ID=%s\n" "$RELEASE_ID" >> $GITHUB_ENV
 
       # Step 2: Set up .NET SDK
       - name: Set up .NET
