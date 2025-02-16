@@ -22,6 +22,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Debug Release Information
+        run: |
+          cat $GITHUB_EVENT_PATH  # Output event info for debugging
+
       - name: Get Latest Release Id by Tag If Dispatched Manually
         id: release_version
         if: ${{ github.event_name == 'workflow_dispatch' }}  # Run only for manual dispatch
@@ -80,12 +84,6 @@ jobs:
       - name: Publish for linux-arm
         run: |
           dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
-
-
-
-      # - name: Debug Release Information
-      #   run: |
-      #     cat $GITHUB_EVENT_PATH  # Output event info for debugging
 
       # Step 6: Create ZIP files for the published artifacts
       - name: Create ZIP for linux-arm64
