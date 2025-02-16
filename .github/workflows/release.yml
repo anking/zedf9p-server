@@ -22,8 +22,7 @@ jobs:
       - name: Get Latest Release Version by Tag
         id: release_version
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"  # Extract tag name from ref
-          echo "Looking for release by tag: $TAG_NAME"
+          echo "Looking for release by tag: ${{ github.event.inputs.release_tag }}"
     
           # Use GitHub API to get the release info for the tag
           release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
