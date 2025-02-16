@@ -22,8 +22,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Get Latest Release Version by Tag
+      - name: Get Latest Release Version by Tag If Dispatched Manually
         id: release_version
+        if: ${{ github.event_name == 'workflow_dispatch' }}  # Run only for manual dispatch
         run: |
           if [ -z "${{ github.event.inputs.release_tag }}" ]; then
             echo "No release Tag provided, aborting upload."
@@ -47,6 +48,13 @@ jobs:
           echo "Release ID: $release_id"
           echo "RELEASE_ID=$release_id" >> $GITHUB_ENV
 
+      # Step  Create release ID From reliase step
+      - name: Get the Release ID
+        id: release
+        if: ${{ github.event_name == 'release' }}  # Run only if the event is a release event
+        run: |
+          echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
+
       # Step 2: Set up .NET SDK
       - name: Set up .NET
         uses: actions/setup-dotnet@v2
@@ -67,11 +75,7 @@ jobs:
         run: |
           dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
-      # Step 5.5: Create release ID
-      # - name: Get the Release ID
-      #   id: release
-      #   run: |
-      #     echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
+
 
       # - name: Debug Release Information
       #   run: |
