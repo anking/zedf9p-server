@@ -35,7 +35,7 @@ jobs:
 
       # Step 6: Upload the artifacts to the release
       - name: Upload linux-arm64 artifact
-        uses: gh action/upload-release-asset@v1
+        uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ./publish/linux-arm64
@@ -43,7 +43,7 @@ jobs:
           asset_content_type: application/zip
 
       - name: Upload linux-arm artifact
-        uses: gh action/upload-release-asset@v1
+        uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ./publish/linux-arm
