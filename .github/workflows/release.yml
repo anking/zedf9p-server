@@ -5,8 +5,8 @@ on:
     types: [created]
   workflow_dispatch:  # This allows manual triggering
     inputs:
-      release_id:
-        description: 'Enter the release ID (e.g., v1.0) from an existing release'
+      release_tag:
+        description: 'Enter the Release Tag (e.g., v1.0) from an existing release'
         required: true
         default: ''
 
@@ -27,7 +27,7 @@ jobs:
           
           # Use GitHub API to get the release info for the tag
           release_info=$(curl --silent -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_id }}")
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.release_tag }}")
           
           # Extract the release ID using jq
           release_id=$(echo "$release_info" | jq --raw-output .id)
@@ -78,19 +78,20 @@ jobs:
       #     echo "Release ID: $release_id"
       #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
 
-      # - name: Create ZIP for linux-arm
-      #   run: |
-      #     cd ./publish
-      #     zip -r linux-arm.zip linux-arm
+      - name: Create ZIP for linux-arm
+        run: |
+          cd ./publish
+          zip -r linux-arm.zip linux-arm
 
       - name: Set Release ID from input
         run: |
-          if [ -z "${{ github.event.inputs.release_id }}" ]; then
-            echo "No release ID provided, aborting upload."
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            echo "No release Tag provided, aborting upload."
             exit 1
           fi
-          echo "Release ID: ${{ github.event.inputs.release_id }}"
-          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=linux-arm64.zip" >> $GITHUB_ENV
+          echo "Release Tag: ${{ github.event.inputs.release_tag }}"
+          echo "Release ID: ${{ env.RELEASE_ID }}"
+          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=${asset_name}&label=${asset_label}" >> $GITHUB_ENV
 
       # - name: Check if it's a release event
       #   id: check_event
@@ -118,10 +119,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Upload linux-arm artifact
-      #   uses: actions/upload-release-asset@v1
-      #   with:
-      #     upload_url: ${{ github.event.release.upload_url }}
-      #     asset_path: ./publish/linux-arm.zip
-      #     asset_name: linux-arm.zip
-      #     asset_content_type: application/zip
+      - name: Upload linux-arm artifact
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./publish/linux-arm.zip
+          asset_name: linux-arm.zip
+          asset_content_type: application/zip
