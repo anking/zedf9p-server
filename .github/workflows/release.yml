@@ -96,7 +96,7 @@ jobs:
         run: |          
           echo "Release Tag: ${{ github.event.inputs.release_tag }}"
           echo "Release ID: ${{ env.RELEASE_ID }}"
-          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets?name=${asset_name}&label=${asset_label}" >> $GITHUB_ENV
+          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${{ env.RELEASE_ID }}/assets" >> $GITHUB_ENV
 
       # - name: Check if it's a release event
       #   id: check_event
