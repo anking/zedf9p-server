@@ -1,0 +1,51 @@
+name: Build and Upload .NET Artifacts
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # Step 2: Set up .NET SDK
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: '8.x'
+
+      # Step 3: Restore dependencies
+      - name: Restore dependencies
+        run: dotnet restore
+
+      # Step 4: Publish for linux-arm64
+      - name: Publish for linux-arm64
+        run: |
+          dotnet publish -c Release --self-contained -r linux-arm64 --output ./publish/linux-arm64
+
+      # Step 5: Publish for linux-arm
+      - name: Publish for linux-arm
+        run: |
+          dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
+
+      # Step 6: Upload the artifacts to the release
+      - name: Upload linux-arm64 artifact
+        uses: gh action/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./publish/linux-arm64
+          asset_name: linux-arm64.zip
+          asset_content_type: application/zip
+
+      - name: Upload linux-arm artifact
+        uses: gh action/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./publish/linux-arm
+          asset_name: linux-arm.zip
+          asset_content_type: application/zip
