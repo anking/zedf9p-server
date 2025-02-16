@@ -121,18 +121,8 @@ jobs:
       #       echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
       #     fi
 
-      - name: Debug upload URL
-        run: |
-            echo "Upload URL: $upload_url"
-
-      - name: Check response
-        run: |
-            echo "Upload URL: ${{ env.upload_url_linux-arm64 }}"
-            curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -F "file=@./publish/linux-arm64.zip" \
-            "${{ env.upload_url_linux-arm64 }}"
-
       # Step 7: Upload the artifacts to the release
+      # This step will fail with "Validation Failed" message if the assets already exist in a release
       - name: Upload linux-arm64 artifact
         uses: actions/upload-release-asset@v1.0.2
         with:
