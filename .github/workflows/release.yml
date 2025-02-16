@@ -22,7 +22,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Get Latest Release Version by Tag If Dispatched Manually
+      - name: Get Latest Release Id by Tag If Dispatched Manually
         id: release_version
         if: ${{ github.event_name == 'workflow_dispatch' }}  # Run only for manual dispatch
         run: |
@@ -49,7 +49,7 @@ jobs:
           echo "RELEASE_ID=$release_id" >> $GITHUB_ENV
 
       # Step  Create release ID From reliase step
-      - name: Get the Release ID
+      - name: Get the Release ID from release path
         id: release
         if: ${{ github.event_name == 'release' }}  # Run only if the event is a release event
         run: |
