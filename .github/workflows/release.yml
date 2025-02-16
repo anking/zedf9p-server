@@ -29,10 +29,10 @@ jobs:
         run: |
           dotnet publish -c Release --self-contained -r linux-arm64 --output ./publish/linux-arm64
 
-      # Step 5: Publish for linux-arm
-      - name: Publish for linux-arm
-        run: |
-          dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
+      # # Step 5: Publish for linux-arm
+      # - name: Publish for linux-arm
+      #   run: |
+      #     dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
       # Step 5.5: Create release ID
       - name: Get the Release ID
@@ -40,16 +40,20 @@ jobs:
         run: |
           echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
 
+      - name: Debug Release Information
+        run: |
+          cat $GITHUB_EVENT_PATH  # Output event info for debugging
+
       # Step 6: Create ZIP files for the published artifacts
       - name: Create ZIP for linux-arm64
         run: |
           cd ./publish
           zip -r linux-arm64.zip linux-arm64
 
-      - name: Create ZIP for linux-arm
-        run: |
-          cd ./publish
-          zip -r linux-arm.zip linux-arm
+      # - name: Create ZIP for linux-arm
+      #   run: |
+      #     cd ./publish
+      #     zip -r linux-arm.zip linux-arm
 
       # Step 7: Upload the artifacts to the release
       - name: Upload linux-arm64 artifact
@@ -60,10 +64,10 @@ jobs:
           asset_name: linux-arm64.zip
           asset_content_type: application/zip
 
-      - name: Upload linux-arm artifact
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./publish/linux-arm.zip
-          asset_name: linux-arm.zip
-          asset_content_type: application/zip
+      # - name: Upload linux-arm artifact
+      #   uses: actions/upload-release-asset@v1
+      #   with:
+      #     upload_url: ${{ github.event.release.upload_url }}
+      #     asset_path: ./publish/linux-arm.zip
+      #     asset_name: linux-arm.zip
+      #     asset_content_type: application/zip
