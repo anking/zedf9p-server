@@ -18,6 +18,10 @@ jobs:
       contents: write
     
     steps:
+      - name: Install jq
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+
       # Step 1: Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
@@ -57,12 +61,17 @@ jobs:
         id: release
         if: ${{ github.event_name == 'release' }}  # Run only if the event is a release event
         run: |
-            RELEASE_ID=$(grep -oP '"release":\s*\{[^}]*"id":\s*\K\d+' "$GITHUB_EVENT_PATH")
-            if [ -z "$RELEASE_ID" ]; then
+            # Use jq to extract the release ID from the event payload
+            RELEASE_ID=$(jq --raw-output '.release.id' "$GITHUB_EVENT_PATH")
+    
+            # Check if RELEASE_ID is empty or "null"
+            if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
               echo "Error: Release ID not found. Please check the event payload."
               exit 1
             fi
-            printf "RELEASE_ID=%s\n" "$RELEASE_ID" >> $GITHUB_ENV
+    
+            # Write the RELEASE_ID to the GitHub Actions environment
+            echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
             echo "Environment variable RELEASE_ID is set to: $RELEASE_ID"
 
       # Step 2: Set up .NET SDK
