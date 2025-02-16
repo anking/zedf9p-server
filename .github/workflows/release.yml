@@ -34,6 +34,12 @@ jobs:
         run: |
           dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
+      # Step 5.5: Create release ID
+      - name: Get the Release ID
+        id: release
+        run: |
+          echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
+
       # Step 6: Create ZIP files for the published artifacts
       - name: Create ZIP for linux-arm64
         run: |
