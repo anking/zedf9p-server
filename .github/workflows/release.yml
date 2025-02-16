@@ -35,38 +35,53 @@ jobs:
       #     dotnet publish -c Release --self-contained -r linux-arm --output ./publish/linux-arm
 
       # Step 5.5: Create release ID
-      - name: Get the Release ID
-        id: release
-        run: |
-          echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
+      # - name: Get the Release ID
+      #   id: release
+      #   run: |
+      #     echo "RELEASE_ID=$(jq --raw-output .id < $GITHUB_EVENT_PATH)" >> $GITHUB_ENV
 
-      - name: Debug Release Information
-        run: |
-          cat $GITHUB_EVENT_PATH  # Output event info for debugging
+      # - name: Debug Release Information
+      #   run: |
+      #     cat $GITHUB_EVENT_PATH  # Output event info for debugging
 
-      # Step 6: Create ZIP files for the published artifacts
-      - name: Create ZIP for linux-arm64
-        run: |
-          cd ./publish
-          zip -r linux-arm64.zip linux-arm64
+      # # Step 6: Create ZIP files for the published artifacts
+      # - name: Create ZIP for linux-arm64
+      #   run: |
+      #     cd ./publish
+      #     zip -r linux-arm64.zip linux-arm64
 
-      - name: Get the Release ID
-        id: release
-        run: |
-          release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
-          echo "Release ID: $release_id"
-          echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+      # - name: Get the Release ID
+      #   id: release
+      #   run: |
+      #     release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
+      #     echo "Release ID: $release_id"
+      #     echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
 
       # - name: Create ZIP for linux-arm
       #   run: |
       #     cd ./publish
       #     zip -r linux-arm.zip linux-arm
 
+      - name: Check if it's a release event
+        id: check_event
+        run: |
+          if [ -f "$GITHUB_EVENT_PATH" ]; then
+            echo "Release event detected"
+            release_id=$(jq --raw-output .release.id < $GITHUB_EVENT_PATH)
+            echo "Release ID: $release_id"
+            echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+          else
+            echo "Manual trigger detected. Please provide the release ID."
+            read -p "Enter the release ID: " release_id
+            echo "Release ID: $release_id"
+            echo "upload_url=https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$release_id/assets{?name,label}" >> $GITHUB_ENV
+          fi
+
       # Step 7: Upload the artifacts to the release
       - name: Upload linux-arm64 artifact
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ github.event.release.upload_url }}
+          upload_url: ${{ env.upload_url }}
           asset_path: ./publish/linux-arm64.zip
           asset_name: linux-arm64.zip
           asset_content_type: application/zip
