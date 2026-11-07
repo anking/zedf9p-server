@@ -8,9 +8,11 @@ caster moves the solution from 3D to RTK fixed. Everything it sees is kept for t
 
 Linux only (uses pty). It is not a GNSS simulator: positions are constants.
 """
+import fcntl
 import os
 import pty
 import struct
+import termios
 import threading
 import time
 import tty
@@ -80,6 +82,10 @@ class F9pSim:
     @property
     def carrier_solution(self):
         return 2 if len(self.rtcm_received) > 0 else 0
+
+    def release_exclusive(self):
+        """Call after killing a driver. A USB port is freed by its last close, but this pty stays open here."""
+        fcntl.ioctl(self.slave, termios.TIOCNXCL)
 
     def close(self):
         self.running = False
