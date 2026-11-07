@@ -6,14 +6,8 @@ namespace Zedf9p.F9p
 {
     public interface IF9pDriver
     {
-        // Asynchronous method to start the driver
-        Task RunAsync(CancellationToken cancellationToken);
-
-        // Method to initialize the driver with a specified mode
+        // Runs the driver in the given mode until cancelled or the owning process goes away
         Task Initialize(OperationMode mode, CancellationToken cancellationToken);
-
-        // Method to set the operational mode of the driver
-        void SetMode(OperationMode mode);
 
         // Method to clean up resources used by the driver
         void Cleanup();

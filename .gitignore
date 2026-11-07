@@ -1,4 +1,10 @@
-/Zedf9p/bin/
-/Zedf9p/obj/
+bin/
+obj/
+out/
+publish/
+logs/
+__pycache__/
 /Zedf9p/Properties/
 .vs
+*.user
+*.DotSettings.user

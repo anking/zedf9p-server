@@ -25,6 +25,9 @@ namespace UBLOX
 
         private readonly object serialReadLock = new object();
 
+        // RTCM goes to the module from a different task than UBX polls: keep each write whole
+        private readonly object serialWriteLock = new object();
+
         //sentence handlers
         Func<char, Task> _nmeaHandler = null;
         Func<byte, Task> _rtcmHandler = null;
@@ -986,7 +989,10 @@ namespace UBLOX
             addByteToArray(ref command, outgoingUBX.checksumA);
             addByteToArray(ref command, outgoingUBX.checksumB);
 
-            _serialPort.Write(command, 0, command.Length);
+            lock (serialWriteLock)
+            {
+                _serialPort.Write(command, 0, command.Length);
+            }
         }
 
         void addByteToArray(ref byte[] bArray, byte newByte)
@@ -1922,7 +1928,8 @@ namespace UBLOX
         }
         
         //Control Fixed Mode for ZED-F9p
-        public async Task<bool> enableFixedMode(int latitude, int longitude, int altitude, ushort maxWait = 250)
+        //latitude and longitude are in 1e-7 degrees with a 1e-9 degree remainder, height is in cm with a 0.1 mm remainder
+        public async Task<bool> enableFixedMode(int latitude, int longitude, int heightCm, sbyte latitudeHp = 0, sbyte longitudeHp = 0, sbyte heightHp = 0, ushort maxWait = 250)
         {
             if (await GetTmode3(maxWait) == null) //Ask module for the current TimeMode3 settings. Loads into payloadCfg.
                 return false;
@@ -1945,8 +1952,13 @@ namespace UBLOX
             //set longitude
             BitConverter.GetBytes(longitude).CopyTo(payloadCfg, 8);
 
-            //set altitude
-            BitConverter.GetBytes(altitude).CopyTo(payloadCfg, 12);
+            //set height above the ellipsoid
+            BitConverter.GetBytes(heightCm).CopyTo(payloadCfg, 12);
+
+            //set the high precision remainders
+            payloadCfg[16] = unchecked((byte)latitudeHp);
+            payloadCfg[17] = unchecked((byte)longitudeHp);
+            payloadCfg[18] = unchecked((byte)heightHp);
 
             return await sendCommand(packetCfg, maxWait) == SfeUbloxStatus.SFE_UBLOX_STATUS_DATA_SENT; // We are only expecting an ACK
         }
@@ -3636,7 +3648,10 @@ namespace UBLOX
         //Write data into GPS device
         public void Send(byte[] data, int len)
         {
-            _serialPort.Write(data, 0, len);
+            lock (serialWriteLock)
+            {
+                _serialPort.Write(data, 0, len);
+            }
         }
     }
 }
