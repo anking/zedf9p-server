@@ -1,15 +1,12 @@
 ﻿using System;
-using System.IO;
-using System.IO.Ports;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using Zedf9p.Ntrip;
 
 namespace Zedf9p.Exceptions
 {
-    public class NtripException : Exception
+    internal class NtripException(string message, NtripResponseKind? response) : Exception(message)
     {
-        public NtripException(string message) : base(message) { }
+        /// <summary>What the caster answered, or null when it could not be reached at all.</summary>
+        public NtripResponseKind? Response { get; } = response;
     }
 
     public class SyncSocketException : Exception

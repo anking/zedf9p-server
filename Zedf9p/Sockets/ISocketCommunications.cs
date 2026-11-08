@@ -9,9 +9,6 @@ namespace Zedf9p.Sockets
         // Method to clean up and close the data sockets
         void CleanupSockets();
 
-        // Other socket-related methods here, such as Send/Receive data
-        //void SendSyncData(string data);
-
         void SendSyncData(SyncData syncData);
 
         void SendNmeaData(string data);
@@ -21,6 +18,9 @@ namespace Zedf9p.Sockets
         int ReceiveSyncData(byte[] syncInBuffer);
 
         bool IsSyncDataSocketConnected();
+
+        // True when the process on the other end of the sync socket has gone away
+        bool IsSyncDataSocketClosedByPeer();
 
         bool IsRtcmDataSocketConnected();
 

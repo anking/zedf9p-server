@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Unit tests
+        run: dotnet test --project Zedf9p.Tests/Zedf9p.Tests.csproj -c Release
+
+      - name: End-to-end tests against the simulated ZED-F9P
+        run: |
+          dotnet publish Zedf9p/Zedf9p.csproj -c Release --self-contained -r linux-x64 -o out/linux-x64
+          python3 tools/sim/e2e.py out/linux-x64/Zedf9p
+
+      - name: Build the Raspberry Pi targets
+        run: |
+          dotnet publish Zedf9p/Zedf9p.csproj -c Release --self-contained -r linux-arm64 -o out/linux-arm64
+          dotnet publish Zedf9p/Zedf9p.csproj -c Release --self-contained -r linux-arm -o out/linux-arm

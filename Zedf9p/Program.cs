@@ -1,40 +1,23 @@
 ﻿/*
 This is a console application that connects to the u-blox ZED-F9P Precision GNSS Module via a serial interface.
 The application configures the module to operate as either an NTRIP Client or Station.
-When set as a Station, the module enters survey mode, and upon completion, it transmits NTRIP data to the caster platform.
-If configured as a Client, it receives NTRIP data, converts it to an NMEA sequence, and combines it with additional GPS data from the u-blox device.
+When set as a Station, the module surveys (or uses a fixed position) and then streams RTCM corrections to the caster.
+When set as a Client, it receives RTCM corrections from the caster, passes them to the module and reports the position.
 
 To compile the application for Linux/Raspberry Pi environment (32/64-bit):
-dotnet publish -c Release --self-contained -r linux-arm
-dotnet publish -c Release --self-contained -r linux-arm64
+dotnet publish Zedf9p/Zedf9p.csproj -c Release --self-contained -r linux-arm
+dotnet publish Zedf9p/Zedf9p.csproj -c Release --self-contained -r linux-arm64
 
-Params:
--com-port [Port]           COM port (e.g., COM#, ttyACM#)
--ntrip-server [rtk2go.com] NTRIP caster server (default: rtk2go.com)
--ntrip-port [2101]         NTRIP caster port (default: 2101)
--ntrip-mountpoint [MountPoint] NTRIP caster mountpoint
--ntrip-password [Password] NTRIP caster password
--rtcm-accuracy-req [3.000] Minimum RTCM accuracy to complete survey (in meters) (default: 3.000)
--rtcm-survey-time [60]     Minimum time required to complete survey (in seconds) (default: 60)
--mode [Idle/Station/Client] Operation mode for the driver (default: Idle)
--nmea-socket [SocketPath]  Path to the NMEA socket
--rtcm-socket [SocketPath]  Path to the RTCM socket
--sync-socket [SocketPath]  Path to the sync socket
--debug                     Enable debug mode (default: false)
-
-To launch this on Pi, run the following:
-    /home/pi/gps-station/f9p/Zedf9p -p /dev/ttyACM0 -s [CASTER_SERVER(rtk2go.com)] -t 2101 -m [MOUNT_POINT] -w [PASSWORD] -a 3.000 -y 60 -o Server -n /tmp/zed-f9p-nmea-data.sock -r /tmp/zed-f9p-rtcm-data.sock -x /tmp/zed-f9p-sync-data.sock -d
-    /home/pi/gps-station/f9p/Zedf9p --com-port /dev/ttyACM0 --ntrip-server [CASTER_SERVER(rtk2go.com)] --ntrip-port 2101 --ntrip-mountpoint [MOUNT_POINT] --ntrip-password [PASSWORD] --rtcm-accuracy-req 3.000 --rtcm-survey-time 60 --mode Server --nmea-socket /tmp/zed-f9p-nmea-data.sock --rtcm-socket /tmp/zed-f9p-rtcm-data.sock --sync-socket /tmp/zed-f9p-sync-data.sock --debug
+See readme.md for the parameters.
 */
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using CommandLine;
-using Zedf9p.Exceptions;
-using Zedf9p.Enums;
 using Zedf9p.F9p;
 using Zedf9p.Sockets;
 using Serilog;
@@ -45,39 +28,48 @@ namespace Zedf9p
 {
     class Program
     {
-        static async Task Main(string[] args)
+        private const int ExitInvalidArguments = 2;
+
+        static async Task<int> Main(string[] args)
         {
+            var parsed = Parser.Default.ParseArguments<InputParams>(args);
+
+            if (parsed.Errors.Any())
+            {
+                // CommandLineParser has already printed the reason. Running on with empty settings would look healthy and do nothing.
+                return parsed.Errors.All(e => e.Tag is ErrorType.HelpRequestedError or ErrorType.VersionRequestedError) ? 0 : ExitInvalidArguments;
+            }
+
+            var problems = parsed.Value.Validate();
+            if (problems.Count > 0)
+            {
+                foreach (var problem in problems)
+                {
+                    Console.Error.WriteLine($"Invalid arguments: {problem}");
+                }
+
+                return ExitInvalidArguments;
+            }
+
             try
             {
                 // Create the host and run the application
-                var host = CreateHostBuilder(args).Build();
+                using var host = CreateHostBuilder(parsed.Value).Build();
                 await host.RunAsync();
+                return Environment.ExitCode;
             }
             catch (Exception e)
             {
                 // Handle any unhandled exceptions here
-                Console.WriteLine($"Main Process Error: {e.Message}");
+                Console.Error.WriteLine($"Main Process Error: {e.Message}");
+                return 1;
             }
         }
 
         // This configures the DI container and services
-        public static IHostBuilder CreateHostBuilder(string[] args)
+        public static IHostBuilder CreateHostBuilder(InputParams inputParams)
         {
-            // Parse the command-line arguments into InputParams
-            var inputParams = new InputParams();
-            var result = Parser.Default.ParseArguments<InputParams>(args);
-
-            result.WithParsed(parsedParams =>
-            {
-                inputParams = parsedParams;
-                Console.WriteLine("Input params parsed successfully");
-            })
-            .WithNotParsed(errors =>
-            {
-                Console.WriteLine("Error parsing arguments. Please check your input.");
-            });
-
-            return Host.CreateDefaultBuilder(args)
+            return Host.CreateDefaultBuilder()
                 .UseSerilog((context, services, configuration) =>
                 {
                     // Set log level based on the debug flag
@@ -88,7 +80,8 @@ namespace Zedf9p
                         .WriteTo.Console(
                             theme: Serilog.Sinks.SystemConsole.Themes.AnsiConsoleTheme.Literate // Apply color theme
                         )
-                        .WriteTo.File("logs/log.txt", rollingInterval: RollingInterval.Day) // Optional: Write logs to a file
+                        // Bounded, because this runs for months on an SD card
+                        .WriteTo.File("logs/log.txt", rollingInterval: RollingInterval.Day, fileSizeLimitBytes: 5 * 1024 * 1024, rollOnFileSizeLimit: true, retainedFileCountLimit: 7)
                         .Enrich.FromLogContext(); // Enrich log with context information
                 })
                 .ConfigureServices((hostContext, services) =>
@@ -133,6 +126,9 @@ namespace Zedf9p
 
         protected override async Task ExecuteAsync(CancellationToken cancellationToken)
         {
+            // Let the host finish starting before the socket retries can block this thread
+            await Task.Yield();
+
             try
             {
                 _logger.Information("F9P Driver Starting...");
@@ -140,19 +136,18 @@ namespace Zedf9p
                 // Start interprocess communication with Node.js
                 _socketCommunications.ConnectDataSockets();
 
-                // Create driver and initialize
+                // Create driver and run until stopped
                 await _driver.Initialize(_inputParams.Mode, cancellationToken);
             }
-            catch (NtripException e)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                //if driver fails to connect to NTRIP server put it into idle mode(only listed to incoming messages and spit out GPS data if available
-                _driver.SetMode(OperationMode.Idle);
-                _logger.Warning($"Ntrip Exception {e.Message}");
-                _logger.Information("Setting driver mode to Idle");
+                _logger.Information("Stop requested");
             }
             catch (Exception e)
             {
-                _logger.Error($"Application Exception: {e.Message}", e);
+                // The owning process restarts the driver when it exits with an error
+                Environment.ExitCode = 1;
+                _logger.Error(e, "Application Exception: {Message}", e.Message);
             }
             finally
             {

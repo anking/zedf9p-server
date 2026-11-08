@@ -1,7 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Serilog;
 using System;
-using System.Net.Sockets;
 using Zedf9p.DTO;
 
 namespace Zedf9p.Sockets
@@ -17,6 +16,9 @@ namespace Zedf9p.Sockets
         private AsyncSocket _syncDataSocket;
         private readonly ILogger _logger;
 
+        // Position and error updates come from different tasks: keep each JSON line whole
+        private readonly object _syncSendLock = new();
+
         // Constructor to accept socket paths
         public SocketCommunications(string nmeaSocketPath, string rtcmSocketPath, string syncSocketPath, ILogger logger)
         {
@@ -31,45 +33,36 @@ namespace Zedf9p.Sockets
         // Connect to f9p socket for interprocess communication
         public void ConnectDataSockets()
         {
-            try
-            {
-                _logger.Information("Connecting to interprocess sockets...");
+            _logger.Information("Connecting to interprocess sockets...");
 
-                // Client socket for HTTP server running on Node
-                TryConnectSocket(SyncDataSocketLocation, ref _syncDataSocket, "Sync");
-                TryConnectSocket(NmeaDataSocketLocation, ref _nmeaDataSocket, "NMEA");
-                TryConnectSocket(RtcmDataSocketLocation, ref _rtcmDataSocket, "RTCM");
-            }
-            catch (SocketException e)
-            {
-                // Unable to connect to the socket, spit out error in a console
-                _logger.Error("Socket connection error: " + e.Message);
-            }
+            // Client socket for HTTP server running on Node
+            TryConnectSocket(SyncDataSocketLocation, ref _syncDataSocket, "Sync");
+            TryConnectSocket(NmeaDataSocketLocation, ref _nmeaDataSocket, "NMEA");
+            TryConnectSocket(RtcmDataSocketLocation, ref _rtcmDataSocket, "RTCM");
         }
 
         private void TryConnectSocket(string socketPath, ref AsyncSocket socket, string socketName)
         {
             if (string.IsNullOrWhiteSpace(socketPath))
             {
-                _logger.Warning($"{socketName} socket is disabled (no path provided).");
+                _logger.Information($"{socketName} socket is disabled (no path provided).");
                 return;
             }
 
-            try
-            {
-                socket = new AsyncSocket(socketPath, _logger).Connect();
-                _logger.Information($"{socketName} socket connected successfully.");
-            }
-            catch (SocketException e)
-            {
-                _logger.Error($"Failed to connect {socketName} socket: {e.Message}");
-            }
+            // A configured socket that cannot be reached is a startup failure: the owner restarts this process
+            socket = new AsyncSocket(socketPath, _logger).Connect();
+            _logger.Information($"{socketName} socket connected successfully.");
         }
 
         // Check if the Sync data socket is connected
         public bool IsSyncDataSocketConnected()
         {
             return _syncDataSocket?.IsConnected() ?? false;
+        }
+
+        public bool IsSyncDataSocketClosedByPeer()
+        {
+            return _syncDataSocket?.IsClosedByPeer() ?? false;
         }
 
         // Check if the RTCM data socket is connected
@@ -99,10 +92,11 @@ namespace Zedf9p.Sockets
                 NullValueHandling = NullValueHandling.Ignore // Ignore null values
             }) + "\n"; // Append newline as separator
 
-            SendSyncData(jsonData);
+            lock (_syncSendLock)
+            {
+                SendData(_syncDataSocket, "Sync", jsonData);
+            }
         }
-
-        private void SendSyncData(string data) => SendData(_syncDataSocket, "Sync", data);
 
         public void SendNmeaData(string data) => SendData(_nmeaDataSocket, "NMEA", data);
 
@@ -116,13 +110,8 @@ namespace Zedf9p.Sockets
                 return;
             }
 
-            if (socket == null)
-            {
-                _logger.Error($"{socketName} socket is NULL. Cannot send data.");
-                return;
-            }
-
-            _logger.Debug($"Checking {socketName} socket connection...");
+            // A socket without a path is disabled on purpose, nothing to report
+            if (socket == null) return;
 
             if (!socket.IsConnected())
             {
@@ -139,22 +128,18 @@ namespace Zedf9p.Sockets
                 }
                 else if (data is byte byteData)
                 {
-                    _logger.Debug($"Sending to {socketName} socket: {byteData}");
                     socket.Send(byteData);
                 }
                 else
                 {
                     _logger.Warning($"Unsupported data type for {socketName} socket: {data.GetType()}");
                 }
-
-                _logger.Debug($"{socketName} data sent successfully.");
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, $"Failed to send data to {socketName}: {data}");
             }
         }
-
 
         /// <summary>
         /// Returns length of data received

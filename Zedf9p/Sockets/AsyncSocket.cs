@@ -4,7 +4,6 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Zedf9p.Unix;
 using Zedf9p.Utils;
 
 namespace Zedf9p.Sockets
@@ -47,7 +46,7 @@ namespace Zedf9p.Sockets
                 };
 
                 // Connect to the Unix socket endpoint
-                _socket.Connect(new UnixEndPoint(_socketLocation)); // Connect to the socket
+                _socket.Connect(new UnixDomainSocketEndPoint(_socketLocation)); // Connect to the socket
                 _logger.Information("Successfully connected to socket at " + _socketLocation);
             };
 
@@ -104,6 +103,23 @@ namespace Zedf9p.Sockets
         public bool IsConnected()
         {
             return _socket?.Connected ?? false;
+        }
+
+        /// <summary>
+        /// Checks whether the other end has closed. A socket only reports this when asked: Connected stays true until a send fails.
+        /// </summary>
+        public bool IsClosedByPeer()
+        {
+            if (_socket == null) return false;
+
+            try
+            {
+                return _socket.Poll(0, SelectMode.SelectRead) && _socket.Available == 0;
+            }
+            catch (Exception e) when (e is SocketException or ObjectDisposedException)
+            {
+                return true;
+            }
         }
 
         /// <summary>
